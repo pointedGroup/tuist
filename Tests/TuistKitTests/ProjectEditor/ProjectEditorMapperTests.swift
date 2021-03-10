@@ -47,7 +47,8 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             configPath: configPath,
             dependenciesPath: dependenciesPath,
             projectManifests: projectManifestPaths,
-            pluginManifests: [],
+            editablePluginManifests: [],
+            builtPluginHelperModules: [],
             helpers: helperPaths,
             templates: templates,
             projectDescriptionPath: projectDescriptionPath
@@ -182,7 +183,8 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             configPath: nil,
             dependenciesPath: nil,
             projectManifests: projectManifestPaths,
-            pluginManifests: [],
+            editablePluginManifests: [],
+            builtPluginHelperModules: [],
             helpers: helperPaths,
             templates: templates,
             projectDescriptionPath: projectDescriptionPath
@@ -260,7 +262,8 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             configPath: configPath,
             dependenciesPath: dependenciesPath,
             projectManifests: projectManifestPaths,
-            pluginManifests: [],
+            editablePluginManifests: [],
+            builtPluginHelperModules: [],
             helpers: helperPaths,
             templates: templates,
             projectDescriptionPath: projectDescriptionPath
@@ -348,6 +351,7 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
     func test_tuist_edit_with_one_plugin_no_projects() throws {
         let sourceRootPath = try temporaryPath()
         let pluginManifestPaths = [sourceRootPath].map { $0.appending(component: "Plugin.swift") }
+        let editablePluginManifests = pluginManifestPaths.map { ($0.parentDirectory.basename, $0) }
         let helperPaths: [AbsolutePath] = []
         let templates: [AbsolutePath] = []
         let projectDescriptionPath = sourceRootPath.appending(component: "ProjectDescription.framework")
@@ -365,7 +369,8 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             configPath: nil,
             dependenciesPath: nil,
             projectManifests: [],
-            pluginManifests: pluginManifestPaths,
+            editablePluginManifests: editablePluginManifests,
+            builtPluginHelperModules: [],
             helpers: helperPaths,
             templates: templates,
             projectDescriptionPath: projectDescriptionPath
@@ -420,6 +425,7 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             sourceRootPath.appending(component: "A").appending(component: "Plugin.swift"),
             sourceRootPath.appending(component: "B").appending(component: "Plugin.swift"),
         ]
+        let editablePluginManifests = pluginManifestPaths.map { ($0.parentDirectory.basename, $0) }
         let helperPaths: [AbsolutePath] = []
         let templates: [AbsolutePath] = []
         let projectDescriptionPath = sourceRootPath.appending(component: "ProjectDescription.framework")
@@ -437,7 +443,8 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             configPath: nil,
             dependenciesPath: nil,
             projectManifests: [],
-            pluginManifests: pluginManifestPaths,
+            editablePluginManifests: editablePluginManifests,
+            builtPluginHelperModules: [],
             helpers: helperPaths,
             templates: templates,
             projectDescriptionPath: projectDescriptionPath
@@ -512,6 +519,7 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
         // Given
         let sourceRootPath = try temporaryPath()
         let pluginManifestPath = sourceRootPath.appending(component: "Plugin.swift")
+        let editablePluginManifests = [(pluginManifestPath.parentDirectory.basename, pluginManifestPath)]
         let helperPaths: [AbsolutePath] = []
         let templates: [AbsolutePath] = []
         let projectDescriptionPath = sourceRootPath.appending(component: "ProjectDescription.framework")
@@ -533,7 +541,8 @@ final class ProjectEditorMapperTests: TuistUnitTestCase {
             configPath: nil,
             dependenciesPath: nil,
             projectManifests: [],
-            pluginManifests: [pluginManifestPath],
+            editablePluginManifests: editablePluginManifests,
+            builtPluginHelperModules: [],
             helpers: helperPaths,
             templates: templates,
             projectDescriptionPath: projectDescriptionPath

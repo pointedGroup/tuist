@@ -156,7 +156,7 @@ final class ProjectEditorTests: TuistUnitTestCase {
         XCTAssertEqual(mapArgs?.tuistPath, tuistPath)
         XCTAssertEqual(mapArgs?.sourceRootPath, directory)
         XCTAssertEqual(mapArgs?.projectDescriptionPath, projectDescriptionPath)
-        XCTAssertEqual(mapArgs?.pluginManifests, [pluginManifest])
+        XCTAssertEqual(mapArgs?.editablePluginManifests.map(\.1), [pluginManifest])
     }
 
     func test_edit_with_many_plugins() throws {
@@ -190,6 +190,6 @@ final class ProjectEditorTests: TuistUnitTestCase {
         XCTAssertEqual(mapArgs?.tuistPath, tuistPath)
         XCTAssertEqual(mapArgs?.sourceRootPath, directory)
         XCTAssertEqual(mapArgs?.projectDescriptionPath, projectDescriptionPath)
-        XCTAssertEqual(mapArgs?.pluginManifests, pluginManifests)
+        XCTAssertEqual(mapArgs?.editablePluginManifests.map(\.1), pluginManifests)
     }
 }

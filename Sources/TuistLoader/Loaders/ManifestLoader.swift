@@ -237,16 +237,21 @@ public class ManifestLoader: ManifestLoading {
             "-framework", "ProjectDescription",
         ]
 
-        let projectDescriptionHelperArguments = try projectDescriptionHelpersBuilder.build(
-            at: path,
-            projectDescriptionSearchPaths: searchPaths,
-            projectDescriptionHelperPlugins: plugins.projectDescriptionHelpers
-        ).flatMap { [
-            "-I", $0.path.parentDirectory.pathString,
-            "-L", $0.path.parentDirectory.pathString,
-            "-F", $0.path.parentDirectory.pathString,
-            "-l\($0.name)",
-        ] }
+        let projectDescriptionHelperArguments: [String]
+        if manifest != .config, manifest != .plugin {
+            projectDescriptionHelperArguments = try projectDescriptionHelpersBuilder.build(
+                at: path,
+                projectDescriptionSearchPaths: searchPaths,
+                projectDescriptionHelperPlugins: plugins.projectDescriptionHelpers
+            ).flatMap { [
+                "-I", $0.path.parentDirectory.pathString,
+                "-L", $0.path.parentDirectory.pathString,
+                "-F", $0.path.parentDirectory.pathString,
+                "-l\($0.name)",
+            ] }
+        } else {
+            projectDescriptionHelperArguments = []
+        }
 
         arguments.append(contentsOf: projectDescriptionHelperArguments)
         arguments.append(path.pathString)
