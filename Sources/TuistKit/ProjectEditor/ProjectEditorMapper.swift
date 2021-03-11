@@ -137,12 +137,7 @@ final class ProjectEditorMapper: ProjectEditorMapping {
         let projectPath = sourceRootPath.appending(component: projectName)
         let manifestsFilesGroup = ProjectGroup.group(name: projectName)
         let baseTargetSettings = Settings(
-            base: [
-                "FRAMEWORK_SEARCH_PATHS": .array([projectDescriptionPath.parentDirectory.pathString]),
-                "LIBRARY_SEARCH_PATH": .array([projectDescriptionPath.parentDirectory.pathString]),
-                "SWIFT_INCLUDE_PATHS": .array([projectDescriptionPath.parentDirectory.pathString]),
-                "SWIFT_VERSION": .string(swiftVersion),
-            ],
+            base: targetBaseSettings(for: [projectDescriptionPath], swiftVersion: swiftVersion),
             configurations: Settings.default.configurations,
             defaultSettings: .recommended
         )
@@ -197,14 +192,8 @@ final class ProjectEditorMapper: ProjectEditorMapping {
             )
         }()
 
-        let manifestTargetLinkPaths = ([projectDescriptionPath] + builtPluginHelperModules.map(\.path)).map(\.parentDirectory.pathString)
         let manifestTargetSettings = Settings(
-            base: [
-                "FRAMEWORK_SEARCH_PATHS": .array(manifestTargetLinkPaths),
-                "LIBRARY_SEARCH_PATH": .array(manifestTargetLinkPaths),
-                "SWIFT_INCLUDE_PATHS": .array(manifestTargetLinkPaths),
-                "SWIFT_VERSION": .string(swiftVersion),
-            ],
+            base: targetBaseSettings(for: [projectDescriptionPath] + builtPluginHelperModules.map(\.path), swiftVersion: swiftVersion),
             configurations: Settings.default.configurations,
             defaultSettings: .recommended
         )
@@ -275,12 +264,7 @@ final class ProjectEditorMapper: ProjectEditorMapping {
         let projectPath = sourceRootPath.appending(component: projectName)
         let pluginsFilesGroup = ProjectGroup.group(name: projectName)
         let targetSettings = Settings(
-            base: [
-                "FRAMEWORK_SEARCH_PATHS": .array([projectDescriptionPath.parentDirectory.pathString]),
-                "LIBRARY_SEARCH_PATH": .array([projectDescriptionPath.parentDirectory.pathString]),
-                "SWIFT_INCLUDE_PATHS": .array([projectDescriptionPath.parentDirectory.pathString]),
-                "SWIFT_VERSION": .string(swiftVersion),
-            ],
+            base: targetBaseSettings(for: [projectDescriptionPath], swiftVersion: swiftVersion),
             configurations: Settings.default.configurations,
             defaultSettings: .recommended
         )
@@ -399,5 +383,15 @@ final class ProjectEditorMapper: ProjectEditorMapping {
             filesGroup: filesGroup,
             dependencies: dependencies
         )
+    }
+
+    private func targetBaseSettings(for includes: [AbsolutePath], swiftVersion: String) -> SettingsDictionary {
+        let includePaths = includes.map(\.parentDirectory.pathString)
+        return [
+            "FRAMEWORK_SEARCH_PATHS": .array(includePaths),
+            "LIBRARY_SEARCH_PATHS": .array(includePaths),
+            "SWIFT_INCLUDE_PATHS": .array(includePaths),
+            "SWIFT_VERSION": .string(swiftVersion),
+        ]
     }
 }
