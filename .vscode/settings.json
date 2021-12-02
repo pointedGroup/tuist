@@ -1,14 +1,21 @@
 {
+  "editor.formatOnSave": false,
   "[yml]": {
     "editor.formatOnSave": false
-  },
-  "[jsx]": {
-    "editor.formatOnSave": true
   },
   "[javascript]": {
     "editor.formatOnSave": true
   },
+  "[javascriptreact]": {
+    "editor.formatOnSave": true
+  },
+  "[json]": {
+    "editor.formatOnSave": true
+  },
   "[typescript]": {
+    "editor.formatOnSave": true
+  },
+  "[typescriptreact]": {
     "editor.formatOnSave": true
   },
   "[ruby]": {
@@ -20,5 +27,12 @@
     "**/node_modules": true,
     "**/.DS_Store": true
   },
-  "editor.formatOnSave": true
+  "workbench.colorTheme": "Dracula Soft",
+  "spellright.language": [
+    "en"
+  ],
+  "spellright.documentTypes": [
+    "latex",
+    "plaintext"
+  ]
 }

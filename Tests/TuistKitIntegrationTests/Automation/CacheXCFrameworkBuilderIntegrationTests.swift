@@ -31,10 +31,10 @@ final class CacheXCFrameworkBuilderIntegrationTests: TuistTestCase {
         let temporaryPath = try self.temporaryPath()
         let frameworksPath = try temporaryFixture("Frameworks")
         let projectPath = frameworksPath.appending(component: "Frameworks.xcodeproj")
-        let target = Target.test(name: "iOS", platform: .iOS, product: .framework, productName: "iOS")
+        let scheme = Scheme.test(name: "iOS")
 
         // When
-        try subject.build(projectPath: projectPath, target: target, configuration: "Debug", into: temporaryPath)
+        try subject.build(scheme: scheme, projectTarget: XcodeBuildTarget(with: projectPath), configuration: "Debug", osVersion: nil, deviceName: nil, into: temporaryPath)
 
         // Then
         XCTAssertEqual(FileHandler.shared.glob(temporaryPath, glob: "*.xcframework").count, 1)
@@ -51,16 +51,18 @@ final class CacheXCFrameworkBuilderIntegrationTests: TuistTestCase {
         let temporaryPath = try self.temporaryPath()
         let frameworksPath = try temporaryFixture("Frameworks")
         let projectPath = frameworksPath.appending(component: "Frameworks.xcodeproj")
-        let target = Target.test(name: "macOS", platform: .macOS, product: .framework, productName: "macOS")
+        let scheme = Scheme.test(name: "macOS")
 
         // When
-        try subject.build(projectPath: projectPath, target: target, configuration: "Debug", into: temporaryPath)
+        try subject.build(scheme: scheme, projectTarget: XcodeBuildTarget(with: projectPath), configuration: "Debug", osVersion: nil, deviceName: nil, into: temporaryPath)
 
         // Then
         XCTAssertEqual(FileHandler.shared.glob(temporaryPath, glob: "*.xcframework").count, 1)
         let xcframeworkPath = try XCTUnwrap(FileHandler.shared.glob(temporaryPath, glob: "*.xcframework").first)
         let infoPlist = try self.infoPlist(xcframeworkPath: xcframeworkPath)
-        XCTAssertNotNil(infoPlist.availableLibraries.first(where: { $0.supportedArchitectures.contains("x86_64") }))
+        XCTAssertNotNil(infoPlist.availableLibraries.first(where: { library in
+            library.supportedArchitectures.contains("x86_64") || library.supportedArchitectures.contains("arm64")
+        }))
         XCTAssertTrue(infoPlist.availableLibraries.allSatisfy { $0.supportedPlatform == "macos" })
         try FileHandler.shared.delete(xcframeworkPath)
     }
@@ -70,10 +72,10 @@ final class CacheXCFrameworkBuilderIntegrationTests: TuistTestCase {
         let temporaryPath = try self.temporaryPath()
         let frameworksPath = try temporaryFixture("Frameworks")
         let projectPath = frameworksPath.appending(component: "Frameworks.xcodeproj")
-        let target = Target.test(name: "tvOS", platform: .tvOS, product: .framework, productName: "tvOS")
+        let scheme = Scheme.test(name: "tvOS")
 
         // When
-        try subject.build(projectPath: projectPath, target: target, configuration: "Debug", into: temporaryPath)
+        try subject.build(scheme: scheme, projectTarget: XcodeBuildTarget(with: projectPath), configuration: "Debug", osVersion: nil, deviceName: nil, into: temporaryPath)
 
         // Then
         XCTAssertEqual(FileHandler.shared.glob(temporaryPath, glob: "*.xcframework").count, 1)
@@ -90,10 +92,10 @@ final class CacheXCFrameworkBuilderIntegrationTests: TuistTestCase {
         let temporaryPath = try self.temporaryPath()
         let frameworksPath = try temporaryFixture("Frameworks")
         let projectPath = frameworksPath.appending(component: "Frameworks.xcodeproj")
-        let target = Target.test(name: "watchOS", platform: .watchOS, product: .framework, productName: "watchOS")
+        let scheme = Scheme.test(name: "watchOS")
 
         // When
-        try subject.build(projectPath: projectPath, target: target, configuration: "Debug", into: temporaryPath)
+        try subject.build(scheme: scheme, projectTarget: XcodeBuildTarget(with: projectPath), configuration: "Debug", osVersion: nil, deviceName: nil, into: temporaryPath)
 
         // Then
         XCTAssertEqual(FileHandler.shared.glob(temporaryPath, glob: "*.xcframework").count, 1)

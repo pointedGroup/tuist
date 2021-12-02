@@ -12,7 +12,6 @@ import XCTest
 
 final class ConfigGeneratorTests: TuistUnitTestCase {
     var pbxproj: PBXProj!
-    var graph: Graph!
     var subject: ConfigGenerator!
     var pbxTarget: PBXNativeTarget!
 
@@ -102,6 +101,44 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
 
         assert(config: customReleaseConfig, contains: commonSettings)
         assert(config: customReleaseConfig, contains: releaseSettings)
+    }
+
+    func test_generateTargetConfig_whenSourceRootIsEqualToXcodeprojPath() throws {
+        // Given
+        let sourceRootPath = try temporaryPath()
+        let project = Project.test(
+            sourceRootPath: sourceRootPath,
+            xcodeProjPath: sourceRootPath.appending(component: "Project.xcodeproj")
+        )
+        let target = Target.test(
+            infoPlist: .file(path: sourceRootPath.appending(component: "Info.plist"))
+        )
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
+
+        // When
+        try subject.generateTargetConfig(
+            target,
+            project: project,
+            pbxTarget: pbxTarget,
+            pbxproj: pbxproj,
+            projectSettings: .default,
+            fileElements: ProjectFileElements(),
+            graphTraverser: graphTraverser,
+            sourceRootPath: sourceRootPath
+        )
+
+        // Then
+        let configurationList = pbxTarget.buildConfigurationList
+        let debugConfig = configurationList?.configuration(name: "Debug")
+        let releaseConfig = configurationList?.configuration(name: "Release")
+
+        let expectedSettings = [
+            "INFOPLIST_FILE": "Info.plist",
+        ]
+
+        assert(config: debugConfig, contains: expectedSettings)
+        assert(config: releaseConfig, contains: expectedSettings)
     }
 
     func test_generateTestTargetConfiguration_iOS() throws {
@@ -198,8 +235,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         // Given
         let project = Project.test()
         let target = Target.test(deploymentTarget: .iOS("12.0", [.iphone, .ipad]))
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -231,8 +268,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         // Given
         let project = Project.test()
         let target = Target.test(deploymentTarget: .macOS("10.14.1"))
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -263,8 +300,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         // Given
         let project = Project.test()
         let target = Target.test(deploymentTarget: .iOS("13.1", [.iphone, .ipad, .mac]))
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -298,8 +335,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         // Given
         let project = Project.test()
         let target = Target.test(deploymentTarget: .watchOS("6.0"))
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -330,8 +367,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         // Given
         let project = Project.test()
         let target = Target.test(deploymentTarget: .tvOS("14.0"))
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -406,8 +443,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         ])
         let project = Project.test()
         let target = Target.test()
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -434,8 +471,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         ])
         let project = Project.test()
         let target = Target.test()
-        let graph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         try subject.generateTargetConfig(
@@ -523,9 +560,8 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
             settings: .default,
             targets: [target]
         )
-        let graph = Graph.test()
-        let valueGraph = ValueGraph.test(path: project.path)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(path: project.path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         let fileElements = ProjectFileElements()
         let groups = ProjectGroups.generate(project: project, pbxproj: pbxproj)
@@ -564,14 +600,14 @@ final class ConfigGeneratorTests: TuistUnitTestCase {
         let target = Target.test(name: "Test", platform: platform, product: uiTest ? .uiTests : .unitTests)
         let project = Project.test(path: dir, name: "Project", targets: [target])
 
-        let graph = ValueGraph.test(
+        let graph = Graph.test(
             name: project.name,
             path: project.path,
             projects: [project.path: project],
             targets: [project.path: [appTarget.name: appTarget, target.name: target]],
-            dependencies: [ValueGraphDependency.target(name: target.name, path: project.path): Set([.target(name: appTarget.name, path: project.path)])]
+            dependencies: [GraphDependency.target(name: target.name, path: project.path): Set([.target(name: appTarget.name, path: project.path)])]
         )
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         _ = try subject.generateTargetConfig(
             target,

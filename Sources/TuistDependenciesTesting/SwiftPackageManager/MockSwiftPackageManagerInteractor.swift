@@ -1,24 +1,41 @@
+import ProjectDescription
 import TSCBasic
+import TSCUtility
 import TuistCore
+import TuistGraph
 
 @testable import TuistDependencies
 
 public final class MockSwiftPackageManagerInteractor: SwiftPackageManagerInteracting {
     public init() {}
 
-    var invokedFetch = false
-    var invokedFetchCount = 0
-    var invokedFetchParameters: AbsolutePath?
-    var invokedFetchParametersList = [AbsolutePath]()
-    var stubbedFetchError: Error?
+    var invokedInstall = false
+    var installStub: (
+        (
+            AbsolutePath,
+            TuistGraph.SwiftPackageManagerDependencies,
+            Set<TuistGraph.Platform>,
+            Bool,
+            TSCUtility.Version?
+        ) throws -> TuistCore.DependenciesGraph
+    )?
 
-    public func fetch(dependenciesDirectory: AbsolutePath) throws {
-        invokedFetch = true
-        invokedFetchCount += 1
-        invokedFetchParameters = dependenciesDirectory
-        invokedFetchParametersList.append(dependenciesDirectory)
-        if let error = stubbedFetchError {
-            throw error
-        }
+    public func install(
+        dependenciesDirectory: AbsolutePath,
+        dependencies: TuistGraph.SwiftPackageManagerDependencies,
+        platforms: Set<TuistGraph.Platform>,
+        shouldUpdate: Bool,
+        swiftToolsVersion: TSCUtility.Version?
+    ) throws -> TuistCore.DependenciesGraph {
+        invokedInstall = true
+        return try installStub?(dependenciesDirectory, dependencies, platforms, shouldUpdate, swiftToolsVersion) ?? .none
+    }
+
+    var invokedClean = false
+    var cleanStub: ((AbsolutePath) throws -> Void)?
+
+    public func clean(dependenciesDirectory: AbsolutePath) throws {
+        invokedClean = true
+        try cleanStub?(dependenciesDirectory)
     }
 }

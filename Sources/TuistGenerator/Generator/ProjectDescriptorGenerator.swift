@@ -72,7 +72,9 @@ final class ProjectDescriptorGenerator: ProjectDescriptorGenerating {
     {
         logger.notice("Generating project \(project.name)")
 
-        let workspaceData = XCWorkspaceData(children: [])
+        let selfRef = XCWorkspaceDataFileRef(location: .`self`(""))
+        let selfRefFile = XCWorkspaceDataElement.file(selfRef)
+        let workspaceData = XCWorkspaceData(children: [selfRefFile])
         let workspace = XCWorkspace(data: workspaceData)
         let projectConstants = try determineProjectConstants(graphTraverser: graphTraverser)
         let pbxproj = PBXProj(
@@ -280,6 +282,11 @@ final class ProjectDescriptorGenerator: ProjectDescriptorGenerating {
         /// Organization name
         if let organizationName = project.organizationName {
             attributes["ORGANIZATIONNAME"] = organizationName
+        }
+
+        /// Last upgrade check
+        if let lastUpgradeCheck = project.lastUpgradeCheck {
+            attributes["LastUpgradeCheck"] = lastUpgradeCheck.xcodeStringValue
         }
 
         return attributes

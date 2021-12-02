@@ -32,7 +32,6 @@ enum CloudAuthServiceError: FatalError, Equatable {
 }
 
 final class CloudAuthService: CloudAuthServicing {
-    /// Cloud session controller.
     let cloudSessionController: CloudSessionControlling
     let configLoader: ConfigLoading
 

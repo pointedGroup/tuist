@@ -16,13 +16,20 @@ final class CacheGraphLinterTests: TuistUnitTestCase {
 
     func test_lint() {
         // Given
-        let target = Target.test(actions: [
+        let project = Project.test()
+        let target = Target.test(scripts: [
             .init(name: "test", order: .post, script: .embedded("echo 'Hello World'")),
         ])
-        let targetNode = TargetNode.test(target: target)
+        let graphTarget = GraphTarget.test(
+            path: project.path,
+            target: target,
+            project: project
+        )
         let graph = Graph.test(
-            entryNodes: [targetNode],
-            targets: [targetNode.path: [targetNode]]
+            projects: [project.path: project],
+            targets: [
+                graphTarget.path: [graphTarget.target.name: graphTarget.target],
+            ]
         )
 
         // When
@@ -30,7 +37,7 @@ final class CacheGraphLinterTests: TuistUnitTestCase {
 
         // Then
         XCTAssertPrinterOutputContains("""
-        The following targets contain actions that might introduce non-cacheable side-effects
+        The following targets contain scripts that might introduce non-cacheable side-effects
         """)
     }
 }

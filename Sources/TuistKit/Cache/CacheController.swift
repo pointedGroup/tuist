@@ -11,62 +11,29 @@ import TuistGraph
 import TuistLoader
 import TuistSupport
 
-/// A provider that concatenates the default mappers, to the mapper that adds the build phase
-/// to locate the built products directory.
-class CacheControllerProjectMapperProvider: ProjectMapperProviding {
-    fileprivate let contentHasher: ContentHashing
-    init(contentHasher: ContentHashing) {
-        self.contentHasher = contentHasher
-    }
-
-    func mapper(config: Config) -> ProjectMapping {
-        let defaultProjectMapperProvider = ProjectMapperProvider(contentHasher: contentHasher)
-        let defaultMapper = defaultProjectMapperProvider.mapper(config: config)
-        return SequentialProjectMapper(mappers: [defaultMapper])
-    }
-}
-
-protocol CacheControllerProjectGeneratorProviding {
-    /// Returns an instance of the project generator that should be used to generate the projects for caching.
-    /// - Returns: An instance of the project generator.
-    func generator() -> Generating
-}
-
-/// A provider that returns the project generator that should be used by the cache controller.
-class CacheControllerProjectGeneratorProvider: CacheControllerProjectGeneratorProviding {
-    fileprivate let contentHasher: ContentHashing
-    init(contentHasher: ContentHashing) {
-        self.contentHasher = contentHasher
-    }
-
-    func generator() -> Generating {
-        let contentHasher = CacheContentHasher()
-        let projectMapperProvider = CacheControllerProjectMapperProvider(contentHasher: contentHasher)
-        let workspaceMapperProvider = WorkspaceMapperProvider(projectMapperProvider: projectMapperProvider)
-        return Generator(
-            projectMapperProvider: projectMapperProvider,
-            graphMapperProvider: GraphMapperProvider(),
-            workspaceMapperProvider: workspaceMapperProvider,
-            manifestLoaderFactory: ManifestLoaderFactory()
-        )
-    }
-}
-
 protocol CacheControlling {
     /// Caches the cacheable targets that are part of the workspace or project at the given path.
     /// - Parameters:
+    ///   - config: The project configuration.
     ///   - path: Path to the directory that contains a workspace or a project.
     ///   - cacheProfile: The caching profile.
-    ///   - targets: If present, a list of target to build.
-    func cache(path: AbsolutePath, cacheProfile: TuistGraph.Cache.Profile, targetsToFilter: [String]) throws
+    ///   - includedTargets: If present, a list of the targets and their dependencies to cache.
+    ///   - dependenciesOnly: If true, the targets passed in the `targets` parameter are not cached, but only their dependencies
+    func cache(config: Config,
+               path: AbsolutePath,
+               cacheProfile: TuistGraph.Cache.Profile,
+               includedTargets: Set<String>,
+               dependenciesOnly: Bool) throws
 }
 
 final class CacheController: CacheControlling {
-    /// Project generator provider.
-    let projectGeneratorProvider: CacheControllerProjectGeneratorProviding
+    /// Generator factory
+    let generatorFactory: GeneratorFactorying
 
     /// Utility to build the (xc)frameworks.
     private let artifactBuilder: CacheArtifactBuilding
+
+    private let bundleArtifactBuilder: CacheArtifactBuilding
 
     /// Cache graph content hasher.
     private let cacheGraphContentHasher: CacheGraphContentHashing
@@ -77,106 +44,188 @@ final class CacheController: CacheControlling {
     /// Cache graph linter.
     private let cacheGraphLinter: CacheGraphLinting
 
-    convenience init(cache: CacheStoring,
-                     artifactBuilder: CacheArtifactBuilding,
-                     contentHasher: ContentHashing)
-    {
+    convenience init(
+        cache: CacheStoring,
+        artifactBuilder: CacheArtifactBuilding,
+        bundleArtifactBuilder: CacheArtifactBuilding,
+        contentHasher: ContentHashing
+    ) {
         self.init(
             cache: cache,
             artifactBuilder: artifactBuilder,
-            projectGeneratorProvider: CacheControllerProjectGeneratorProvider(contentHasher: contentHasher),
+            bundleArtifactBuilder: bundleArtifactBuilder,
+            generatorFactory: GeneratorFactory(contentHasher: contentHasher),
             cacheGraphContentHasher: CacheGraphContentHasher(contentHasher: contentHasher),
             cacheGraphLinter: CacheGraphLinter()
         )
     }
 
-    init(cache: CacheStoring,
-         artifactBuilder: CacheArtifactBuilding,
-         projectGeneratorProvider: CacheControllerProjectGeneratorProviding,
-         cacheGraphContentHasher: CacheGraphContentHashing,
-         cacheGraphLinter: CacheGraphLinting)
-    {
+    init(
+        cache: CacheStoring,
+        artifactBuilder: CacheArtifactBuilding,
+        bundleArtifactBuilder: CacheArtifactBuilding,
+        generatorFactory: GeneratorFactorying,
+        cacheGraphContentHasher: CacheGraphContentHashing,
+        cacheGraphLinter: CacheGraphLinting
+    ) {
         self.cache = cache
-        self.projectGeneratorProvider = projectGeneratorProvider
+        self.generatorFactory = generatorFactory
         self.artifactBuilder = artifactBuilder
+        self.bundleArtifactBuilder = bundleArtifactBuilder
         self.cacheGraphContentHasher = cacheGraphContentHasher
         self.cacheGraphLinter = cacheGraphLinter
     }
 
-    func cache(path: AbsolutePath, cacheProfile: TuistGraph.Cache.Profile, targetsToFilter: [String]) throws {
-        let generator = projectGeneratorProvider.generator()
-        let (projectPath, graph) = try generator.generateWithGraph(path: path, projectOnly: false)
+    func cache(
+        config: Config,
+        path: AbsolutePath,
+        cacheProfile: TuistGraph.Cache.Profile,
+        includedTargets: Set<String>,
+        dependenciesOnly: Bool
+    ) throws {
+        let xcframeworks = artifactBuilder.cacheOutputType == .xcframework
+        let generator = generatorFactory.cache(
+            config: config,
+            includedTargets: includedTargets.isEmpty ? nil : Set(includedTargets),
+            focusedTargets: nil,
+            xcframeworks: xcframeworks,
+            cacheProfile: cacheProfile
+        )
+        let (_, graph) = try generator.generateWithGraph(path: path, projectOnly: false)
 
         // Lint
         cacheGraphLinter.lint(graph: graph)
 
         // Hash
         logger.notice("Hashing cacheable targets")
-        let hashesByCacheableTarget = try cacheGraphContentHasher.contentHashes(
+
+        let hashesByTargetToBeCached = try makeHashesByTargetToBeCached(
             for: graph,
             cacheProfile: cacheProfile,
-            cacheOutputType: artifactBuilder.cacheOutputType
+            cacheOutputType: artifactBuilder.cacheOutputType,
+            includedTargets: includedTargets,
+            dependenciesOnly: dependenciesOnly
         )
 
-        let filteredTargets: [TargetNode]
-        if targetsToFilter.isEmpty {
-            filteredTargets = Array(hashesByCacheableTarget.keys)
-        } else {
-            filteredTargets = Array(hashesByCacheableTarget.keys.filter { targetsToFilter.contains($0.name) })
+        guard !hashesByTargetToBeCached.isEmpty else {
+            logger.notice("All cacheable targets are already cached")
+            return
         }
+
+        logger.notice("Targets to be cached: \(hashesByTargetToBeCached.map(\.0.target.name).sorted().joined(separator: ", "))")
+
+        logger.notice("Filtering cacheable targets")
+
+        let targetsToBeCached = Set(hashesByTargetToBeCached.map(\.0.target.name))
+        let (projectPath, updatedGraph) = try generatorFactory
+            .cache(
+                config: config,
+                includedTargets: targetsToBeCached,
+                focusedTargets: targetsToBeCached,
+                xcframeworks: xcframeworks,
+                cacheProfile: cacheProfile
+            )
+            .generateWithGraph(path: path, projectOnly: false)
 
         logger.notice("Building cacheable targets")
-        let sortedCacheableTargets = try topologicalSort(filteredTargets, successors: \.targetDependencies)
 
-        for (index, target) in sortedCacheableTargets.reversed().enumerated() {
-            logger.notice("Building cacheable targets: \(target.name), \(index + 1) out of \(sortedCacheableTargets.count)")
-
-            let hash = hashesByCacheableTarget[target]!
-
-            if let exists = try cache.exists(hash: hash).toBlocking().first(), exists {
-                logger.pretty("The target \(.bold(.raw(target.name))) with hash \(.bold(.raw(hash))) and type \(artifactBuilder.cacheOutputType.description) is already in the cache. Skipping...")
-                continue
-            }
-
-            // Build
-            try buildAndCacheFramework(path: projectPath, target: target, configuration: cacheProfile.configuration, hash: hash)
-        }
+        try archive(updatedGraph, projectPath: projectPath, cacheProfile: cacheProfile, hashesByTargetToBeCached)
 
         logger.notice("All cacheable targets have been cached successfully as \(artifactBuilder.cacheOutputType.description)s", metadata: .success)
     }
 
-    /// Builds the .xcframework for the given target and returns an obervable to store them in the cache.
-    /// - Parameters:
-    ///   - path: Path to either the .xcodeproj or .xcworkspace that contains the framework to be cached.
-    ///   - target: Target whose .(xc)framework will be built and cached.
-    ///   - configuration: The configuration.
-    ///   - hash: Hash of the target.
-    fileprivate func buildAndCacheFramework(path: AbsolutePath,
-                                            target: TargetNode,
-                                            configuration: String,
-                                            hash: String) throws
-    {
-        let outputDirectory = try FileHandler.shared.temporaryDirectory()
-        defer {
-            try? FileHandler.shared.delete(outputDirectory)
-        }
+    private func archive(
+        _ graph: Graph,
+        projectPath: AbsolutePath,
+        cacheProfile: TuistGraph.Cache.Profile,
+        _ hashesByCacheableTarget: [(GraphTarget, String)]
+    ) throws {
+        let binariesSchemes = graph.workspace.schemes
+            .filter { $0.name.contains(Constants.AutogeneratedScheme.binariesSchemeNamePrefix) }
+            .filter { !($0.buildAction?.targets ?? []).isEmpty }
+        let bundlesSchemes = graph.workspace.schemes
+            .filter { $0.name.contains(Constants.AutogeneratedScheme.bundlesSchemeNamePrefix) }
+            .filter { !($0.buildAction?.targets ?? []).isEmpty }
 
-        if path.extension == "xcworkspace" {
-            try artifactBuilder.build(
-                workspacePath: path,
-                target: target.target,
-                configuration: configuration,
-                into: outputDirectory
-            )
-        } else {
-            try artifactBuilder.build(
-                projectPath: path,
-                target: target.target,
-                configuration: configuration,
-                into: outputDirectory
-            )
-        }
+        try FileHandler.shared.inTemporaryDirectory { outputDirectory in
+            for scheme in binariesSchemes {
+                let outputDirectory = outputDirectory.appending(component: scheme.name)
+                try FileHandler.shared.createFolder(outputDirectory)
+                try artifactBuilder.build(
+                    scheme: scheme,
+                    projectTarget: XcodeBuildTarget(with: projectPath),
+                    configuration: cacheProfile.configuration,
+                    osVersion: cacheProfile.os,
+                    deviceName: cacheProfile.device,
+                    into: outputDirectory
+                )
+            }
 
-        _ = try cache.store(hash: hash, paths: FileHandler.shared.glob(outputDirectory, glob: "*")).toBlocking().last()
+            for scheme in bundlesSchemes {
+                let outputDirectory = outputDirectory.appending(component: scheme.name)
+                try FileHandler.shared.createFolder(outputDirectory)
+                try bundleArtifactBuilder.build(
+                    scheme: scheme,
+                    projectTarget: XcodeBuildTarget(with: projectPath),
+                    configuration: cacheProfile.configuration,
+                    osVersion: cacheProfile.os,
+                    deviceName: cacheProfile.device,
+                    into: outputDirectory
+                )
+            }
+
+            let targetsToStore = hashesByCacheableTarget.map(\.0.target.name).sorted().joined(separator: ", ")
+            logger.notice("Storing \(hashesByCacheableTarget.count) cacheable targets: \(targetsToStore)")
+            try hashesByCacheableTarget.forEach(context: .concurrent) { target, hash in
+                let isBinary = target.target.product.isFramework
+                let suffix = "\(isBinary ? Constants.AutogeneratedScheme.binariesSchemeNamePrefix : Constants.AutogeneratedScheme.bundlesSchemeNamePrefix)-\(target.target.platform.caseValue)"
+
+                let productNameWithExtension = target.target.productName
+                _ = try cache.store(
+                    name: target.target.name,
+                    hash: hash,
+                    paths: FileHandler.shared.glob(outputDirectory.appending(component: suffix), glob: "\(productNameWithExtension).*")
+                ).toBlocking().last()
+            }
+        }
+    }
+
+    func makeHashesByTargetToBeCached(
+        for graph: Graph,
+        cacheProfile: TuistGraph.Cache.Profile,
+        cacheOutputType: CacheOutputType,
+        includedTargets: Set<String>,
+        dependenciesOnly: Bool
+    ) throws -> [(GraphTarget, String)] {
+        // When `dependenciesOnly` is true, there is no need to compute `includedTargets` hashes
+        let excludedTargets = dependenciesOnly ? includedTargets : []
+        let hashesByCacheableTarget = try cacheGraphContentHasher.contentHashes(
+            for: graph,
+            cacheProfile: cacheProfile,
+            cacheOutputType: cacheOutputType,
+            excludedTargets: excludedTargets
+        )
+
+        let graphTraverser = GraphTraverser(graph: graph)
+
+        let graph = try topologicalSort(
+            Array(graphTraverser.allTargets()),
+            successors: {
+                Array(graphTraverser.directTargetDependencies(path: $0.path, name: $0.target.name))
+            }
+        )
+
+        return try graph.compactMap(context: .concurrent) { target throws -> (GraphTarget, String)? in
+            guard
+                let hash = hashesByCacheableTarget[target],
+                // if cache already exists, no need to build
+                try !self.cache.exists(name: target.target.name, hash: hash).toBlocking().single()
+            else {
+                return nil
+            }
+
+            return (target, hash)
+        }
+        .reversed()
     }
 }

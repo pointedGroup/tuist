@@ -6,12 +6,12 @@ import TuistGraph
 public final class MockGraphContentHasher: GraphContentHashing {
     public init() {}
 
-    public var contentHashesStub: ((TuistCore.Graph, (TargetNode) -> Bool, [String]) throws -> [TargetNode: String])?
+    public var contentHashesStub: ((Graph, (GraphTarget) -> Bool, [String]) throws -> [GraphTarget: String])?
     public func contentHashes(
-        for graph: TuistCore.Graph,
-        filter: (TargetNode) -> Bool,
+        for graph: Graph,
+        filter: (GraphTarget) -> Bool,
         additionalStrings: [String]
-    ) throws -> [TargetNode: String] {
+    ) throws -> [GraphTarget: String] {
         try contentHashesStub?(graph, filter, additionalStrings) ?? [:]
     }
 }

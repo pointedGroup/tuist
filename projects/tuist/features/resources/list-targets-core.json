@@ -1,0 +1,16 @@
+[
+  {
+    "linkedFrameworksCount" : 0,
+    "targetDependenciesNames" : [
+
+    ],
+    "targetName" : "Core"
+  },
+  {
+    "linkedFrameworksCount" : 1,
+    "targetDependenciesNames" : [
+      "Core"
+    ],
+    "targetName" : "CoreTests"
+  }
+]

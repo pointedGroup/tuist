@@ -4,59 +4,32 @@ import GraphViz
 import TSCBasic
 import TuistCore
 import TuistGenerator
+import TuistGraph
 import TuistLoader
 import TuistPlugin
 import TuistSupport
 
 final class GraphService {
-    /// Dot graph generator.
-    private let graphVizGenerator: GraphVizGenerating
-
-    /// Manifest loader.
-    private let manifestLoader: ManifestLoading
-
-    /// The plugin service
-    private let pluginsService: PluginServicing
-
-    /// The Tuist configuration loader
-    private let configLoader: ConfigLoading
+    private let graphVizMapper: GraphToGraphVizMapping
+    private let manifestGraphLoader: ManifestGraphLoading
 
     convenience init() {
-        let manifestLinter = ManifestLinter()
-        let manifestLoader = ManifestLoader()
-
-        let graphVizGenerator = GraphVizGenerator(
-            modelLoader: GeneratorModelLoader(
-                manifestLoader: manifestLoader,
-                manifestLinter: manifestLinter
-            )
-        )
-
-        let modelLoader = GeneratorModelLoader(
-            manifestLoader: manifestLoader,
-            manifestLinter: manifestLinter
-        )
-
-        let configLoader = ConfigLoader(manifestLoader: manifestLoader)
-        let pluginsService = PluginService(manifestLoader: manifestLoader)
+        let manifestLoader = ManifestLoaderFactory()
+            .createManifestLoader()
+        let manifestGraphLoader = ManifestGraphLoader(manifestLoader: manifestLoader)
+        let graphVizMapper = GraphToGraphVizMapper()
         self.init(
-            graphVizGenerator: graphVizGenerator,
-            manifestLoader: manifestLoader,
-            pluginsService: pluginsService,
-            configLoader: configLoader
+            graphVizGenerator: graphVizMapper,
+            manifestGraphLoader: manifestGraphLoader
         )
     }
 
     init(
-        graphVizGenerator: GraphVizGenerating,
-        manifestLoader: ManifestLoading,
-        pluginsService: PluginServicing,
-        configLoader: ConfigLoading
+        graphVizGenerator: GraphToGraphVizMapping,
+        manifestGraphLoader: ManifestGraphLoading
     ) {
-        self.graphVizGenerator = graphVizGenerator
-        self.manifestLoader = manifestLoader
-        self.pluginsService = pluginsService
-        self.configLoader = configLoader
+        graphVizMapper = graphVizGenerator
+        self.manifestGraphLoader = manifestGraphLoader
     }
 
     func run(format: GraphFormat,
@@ -67,27 +40,29 @@ final class GraphService {
              path: AbsolutePath,
              outputPath: AbsolutePath) throws
     {
-        // Load config
-        let config = try configLoader.loadConfig(path: path)
+        let graph = try manifestGraphLoader.loadGraph(at: path)
 
-        // Load Plugins
-        let plugins = try pluginsService.loadPlugins(using: config)
-        manifestLoader.register(plugins: plugins)
-
-        // Generate the graph
-        let graphVizGraph = try graphVizGenerator.generate(
-            at: path,
-            manifestLoader: manifestLoader,
-            skipTestTargets: skipTestTargets,
-            skipExternalDependencies: skipExternalDependencies,
-            targetsToFilter: targetsToFilter
-        )
         let filePath = outputPath.appending(component: "graph.\(format.rawValue)")
         if FileHandler.shared.exists(filePath) {
             logger.notice("Deleting existing graph at \(filePath.pathString)")
             try FileHandler.shared.delete(filePath)
         }
-        try export(graph: graphVizGraph, at: filePath, withFormat: format, layoutAlgorithm: layoutAlgorithm)
+
+        switch format {
+        case .dot, .png:
+            let graphVizGraph = graphVizMapper.map(
+                graph: graph,
+                skipTestTargets: skipTestTargets,
+                skipExternalDependencies: skipExternalDependencies,
+                targetsToFilter: targetsToFilter
+            )
+
+            try export(graph: graphVizGraph, at: filePath, withFormat: format, layoutAlgorithm: layoutAlgorithm)
+        case .json:
+            let outputGraph = GraphOutput.from(graph)
+            try outputGraph.export(to: filePath)
+        }
+
         logger.notice("Graph exported to \(filePath.pathString).", metadata: .success)
     }
 
@@ -101,6 +76,8 @@ final class GraphService {
             try exportDOTRepresentation(from: graph, at: filePath)
         case .png:
             try exportPNGRepresentation(from: graph, at: filePath, layoutAlgorithm: layoutAlgorithm)
+        case .json:
+            throw GraphServiceError.jsonNotValidForVisualExport
         }
     }
 
@@ -130,5 +107,88 @@ final class GraphService {
         var env = System.shared.env
         env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
         try System.shared.runAndPrint(["brew", "install", "graphviz"], verbose: false, environment: env)
+    }
+}
+
+private enum GraphServiceError: FatalError {
+    case jsonNotValidForVisualExport
+    case encodingError(String)
+
+    var description: String {
+        switch self {
+        case .jsonNotValidForVisualExport:
+            return "json format is not valid for visual export"
+        case let .encodingError(format):
+            return "failed to encode graph to \(format)"
+        }
+    }
+
+    var type: ErrorType {
+        switch self {
+        case .jsonNotValidForVisualExport:
+            return .abort
+        case .encodingError:
+            return .abort
+        }
+    }
+}
+
+private extension GraphOutput {
+    static func from(_ graph: TuistGraph.Graph) -> GraphOutput {
+        let projects = graph.projects.reduce(into: [String: ProjectOutput]()) { $0[$1.key.pathString] = ProjectOutput.from($1.value) }
+
+        return GraphOutput(name: graph.name, path: graph.path.pathString, projects: projects)
+    }
+
+    func export(to filePath: AbsolutePath) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
+        let jsonData = try encoder.encode(self)
+        let jsonString = String(data: jsonData, encoding: .utf8)
+        guard let jsonString = jsonString else {
+            throw GraphServiceError.encodingError(GraphFormat.json.rawValue)
+        }
+
+        try FileHandler.shared.write(jsonString, path: filePath, atomically: true)
+    }
+}
+
+private extension ProjectOutput {
+    static func from(_ project: Project) -> ProjectOutput {
+        let packages = project.packages.reduce(into: [PackageOutput]()) { $0.append(PackageOutput.from($1)) }
+        let schemes = project.schemes.reduce(into: [SchemeOutput]()) { $0.append(SchemeOutput.from($1)) }
+        let targets = project.targets.reduce(into: [TargetOutput]()) { $0.append(TargetOutput.from($1)) }
+
+        return ProjectOutput(name: project.name, path: project.path.pathString, packages: packages, targets: targets, schemes: schemes)
+    }
+}
+
+private extension PackageOutput {
+    static func from(_ package: Package) -> PackageOutput {
+        switch package {
+        case let .remote(url, _):
+            return PackageOutput(kind: PackageOutput.PackageKind.remote, path: url)
+        case let .local(path):
+            return PackageOutput(kind: PackageOutput.PackageKind.local, path: path.pathString)
+        }
+    }
+}
+
+private extension TargetOutput {
+    static func from(_ target: Target) -> TargetOutput {
+        return TargetOutput(name: target.name, product: target.product.rawValue)
+    }
+}
+
+private extension SchemeOutput {
+    static func from(_ scheme: Scheme) -> SchemeOutput {
+        var testTargets = [String]()
+        if let testAction = scheme.testAction {
+            for testTarget in testAction.targets {
+                testTargets.append(testTarget.target.name)
+            }
+        }
+
+        return SchemeOutput(name: scheme.name, testActionTargets: testTargets)
     }
 }

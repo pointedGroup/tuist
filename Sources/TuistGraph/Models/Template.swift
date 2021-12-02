@@ -3,15 +3,15 @@ import TSCBasic
 public struct Template: Equatable {
     public let description: String
     public let attributes: [Attribute]
-    public let files: [File]
+    public let items: [Item]
 
     public init(description: String,
                 attributes: [Attribute] = [],
-                files: [File] = [])
+                items: [Item] = [])
     {
         self.description = description
         self.attributes = attributes
-        self.files = files
+        self.items = items
     }
 
     public enum Attribute: Equatable {
@@ -40,9 +40,10 @@ public struct Template: Equatable {
     public enum Contents: Equatable {
         case string(String)
         case file(AbsolutePath)
+        case directory(AbsolutePath)
     }
 
-    public struct File: Equatable {
+    public struct Item: Equatable {
         public let path: RelativePath
         public let contents: Contents
 

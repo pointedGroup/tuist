@@ -11,13 +11,13 @@ extension Config {
 
 extension Template {
     public static func test(description: String = "Template",
-                            attributes: [Template.Attribute] = [],
-                            files: [Template.File] = []) -> Template
+                            attributes: [Attribute] = [],
+                            items: [Template.Item] = []) -> Template
     {
         Template(
             description: description,
             attributes: attributes,
-            files: files
+            items: items
         )
     }
 }
@@ -63,7 +63,7 @@ extension Target {
                             resources: ResourceFileElements = "Resources/**",
                             headers: Headers? = nil,
                             entitlements: Path? = Path("app.entitlements"),
-                            actions: [TargetAction] = [],
+                            scripts: [TargetScript] = [],
                             dependencies: [TargetDependency] = [],
                             settings: Settings? = nil,
                             coreDataModels: [CoreDataModel] = [],
@@ -80,7 +80,7 @@ extension Target {
             resources: resources,
             headers: headers,
             entitlements: entitlements,
-            actions: actions,
+            scripts: scripts,
             dependencies: dependencies,
             settings: settings,
             coreDataModels: coreDataModels,
@@ -89,16 +89,24 @@ extension Target {
     }
 }
 
-extension TargetAction {
+extension TargetScript {
     public static func test(name: String = "Action",
                             tool: String = "",
                             order: Order = .pre,
-                            arguments: [String] = []) -> TargetAction
+                            arguments: [String] = [],
+                            inputPaths: [Path] = [],
+                            inputFileListPaths: [Path] = [],
+                            outputPaths: [Path] = [],
+                            outputFileListPaths: [Path] = []) -> TargetScript
     {
-        TargetAction(
+        TargetScript(
             name: name,
             script: .tool(tool, arguments),
-            order: order
+            order: order,
+            inputPaths: inputPaths,
+            inputFileListPaths: inputFileListPaths,
+            outputPaths: outputPaths,
+            outputFileListPaths: outputFileListPaths
         )
     }
 }
@@ -133,27 +141,27 @@ extension BuildAction {
 extension TestAction {
     public static func test(targets: [TestableTarget] = [],
                             arguments: Arguments? = nil,
-                            config: PresetBuildConfiguration = .debug,
+                            configuration: ConfigurationName = .debug,
                             coverage: Bool = true) -> TestAction
     {
-        TestAction(
-            targets: targets,
+        TestAction.targets(
+            targets,
             arguments: arguments,
-            config: config,
-            coverage: coverage,
+            configuration: configuration,
             preActions: [ExecutionAction.test()],
-            postActions: [ExecutionAction.test()]
+            postActions: [ExecutionAction.test()],
+            options: .options(coverage: coverage)
         )
     }
 }
 
 extension RunAction {
-    public static func test(config: PresetBuildConfiguration = .debug,
+    public static func test(configuration: ConfigurationName = .debug,
                             executable: TargetReference? = nil,
                             arguments: Arguments? = nil) -> RunAction
     {
         RunAction(
-            config: config,
+            configuration: configuration,
             executable: executable,
             arguments: arguments
         )

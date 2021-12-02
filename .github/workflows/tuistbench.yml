@@ -1,4 +1,4 @@
-name: Tuist Benchmark
+name: Tuistbench
 
 on:
   push:
@@ -6,22 +6,69 @@ on:
       - main
   pull_request:
     paths:
-      - tools/tuistbench/**
+      - projects/fourier/**
+      - projects/tuistbench/**
+      - .github/workflows/benchmark.yml
+
+concurrency:
+  group: benchmark-${{ github.head_ref }}
+  cancel-in-progress: true
 
 env:
   TUIST_STATS_OPT_OUT: true
+  RUBY_VERSION: '3.0.2'
 
 jobs:
   test:
-    name: Build tuistbench with Xcode ${{ matrix.xcode }}
-    runs-on: macOS-latest
+    name: Build benchmarking tooling with Xcode ${{ matrix.xcode }}
+    runs-on: macOS-11
     strategy:
       matrix:
-        xcode: ['11.5', '12.3']
+        xcode: ['13.0']
     steps:
       - uses: actions/checkout@v1
       - name: Select Xcode
         run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
-      - name: Build Package
-        working-directory: ./tools/tuistbench
-        run: swift build
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
+      - name: Build
+        run: ./fourier build benchmark
+
+  lint:
+    name: Lint
+    runs-on: macOS-11
+    strategy:
+      matrix:
+        xcode: ['13.0']
+    steps:
+      - uses: actions/checkout@v1
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
+      - name: Install Bundler dependencies
+        run: bundle install
+      - name: Run
+        run: ./fourier lint tuistbench

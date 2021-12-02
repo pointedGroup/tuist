@@ -29,6 +29,16 @@ public struct HTTPResource<T, E: Error>: Equatable, Hashable, CustomStringConver
         )
     }
 
+    public func eraseToAnyResource() -> HTTPResource<Any, Error> {
+        HTTPResource<Any, Error> {
+            self.request()
+        } parse: { data, response in
+            try self.parse(data, response) as Any
+        } parseError: { data, response in
+            try self.parseError(data, response)
+        }
+    }
+
     // MARK: - Hashable
 
     public func hash(into hasher: inout Hasher) {
@@ -56,7 +66,9 @@ extension HTTPResource where T: Decodable, E: Decodable {
         jsonDecoder.keyDecodingStrategy = .convertFromSnakeCase
         return HTTPResource<T, E>(
             request: request,
-            parse: { data, _ in try jsonDecoder.decode(T.self, from: data) },
+            parse: { data, _ in
+                try jsonDecoder.decode(T.self, from: data)
+            },
             parseError: { data, _ in try jsonDecoder.decode(E.self, from: data) }
         )
     }

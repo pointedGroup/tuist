@@ -12,20 +12,27 @@ import XCTest
 final class DependenciesManifestMapperTests: TuistUnitTestCase {
     func test_from() throws {
         // Given
+        let temporaryPath = try self.temporaryPath()
+        let localPackagePath = temporaryPath.appending(component: "LocalPackage")
+
+        let generatorPaths = GeneratorPaths(manifestDirectory: temporaryPath)
         let manifest: ProjectDescription.Dependencies = Dependencies(
-            carthage: .carthage(
+            carthage: [
+                .github(path: "Dependency1", requirement: .exact("1.1.1")),
+                .git(path: "Dependency.git", requirement: .branch("BranchName")),
+                .binary(path: "DependencyXYZ", requirement: .atLeast("2.3.1")),
+            ],
+            swiftPackageManager: .init(
                 [
-                    .github(path: "Dependency1", requirement: .exact("1.1.1")),
-                    .git(path: "Dependency.git", requirement: .branch("BranchName")),
-                    .binary(path: "DependencyXYZ", requirement: .atLeast("2.3.1")),
-                ],
-                platforms: [.iOS, .macOS, .tvOS],
-                options: [.useXCFrameworks, .noUseBinaries]
-            )
+                    .local(path: Path(localPackagePath.pathString)),
+                    .remote(url: "RemotePackage.com", requirement: .exact("1.2.3")),
+                ]
+            ),
+            platforms: [.iOS, .macOS, .tvOS]
         )
 
         // When
-        let model = try TuistGraph.Dependencies.from(manifest: manifest)
+        let got = try TuistGraph.Dependencies.from(manifest: manifest, generatorPaths: generatorPaths)
 
         // Then
         let expected: TuistGraph.Dependencies = .init(
@@ -34,11 +41,22 @@ final class DependenciesManifestMapperTests: TuistUnitTestCase {
                     .github(path: "Dependency1", requirement: .exact("1.1.1")),
                     .git(path: "Dependency.git", requirement: .branch("BranchName")),
                     .binary(path: "DependencyXYZ", requirement: .atLeast("2.3.1")),
+                ]
+            ),
+            swiftPackageManager: .init(
+                [
+                    .local(path: localPackagePath),
+                    .remote(url: "RemotePackage.com", requirement: .exact("1.2.3")),
                 ],
-                platforms: [.iOS, .macOS, .tvOS],
-                options: [.useXCFrameworks, .noUseBinaries]
-            )
+                productTypes: [:],
+                baseSettings: .init(configurations: [
+                    .debug: .init(settings: [:], xcconfig: nil),
+                    .release: .init(settings: [:], xcconfig: nil),
+                ]),
+                targetSettings: [:]
+            ),
+            platforms: [.iOS, .macOS, .tvOS]
         )
-        XCTAssertEqual(model, expected)
+        XCTAssertEqual(got, expected)
     }
 }

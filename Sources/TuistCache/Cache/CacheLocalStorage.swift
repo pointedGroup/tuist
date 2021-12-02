@@ -5,17 +5,17 @@ import TuistCore
 import TuistSupport
 
 enum CacheLocalStorageError: FatalError, Equatable {
-    case xcframeworkNotFound(hash: String)
+    case compiledArtifactNotFound(hash: String)
 
     var type: ErrorType {
         switch self {
-        case .xcframeworkNotFound: return .abort
+        case .compiledArtifactNotFound: return .abort
         }
     }
 
     var description: String {
         switch self {
-        case let .xcframeworkNotFound(hash):
+        case let .compiledArtifactNotFound(hash):
             return "xcframework with hash '\(hash)' not found in the local cache"
         }
     }
@@ -28,8 +28,8 @@ public final class CacheLocalStorage: CacheStoring {
 
     // MARK: - Init
 
-    public convenience init() {
-        self.init(cacheDirectory: Environment.shared.buildCacheDirectory)
+    public convenience init(cacheDirectoriesProvider: CacheDirectoriesProviding) {
+        self.init(cacheDirectory: cacheDirectoriesProvider.cacheDirectory(for: .builds))
     }
 
     init(cacheDirectory: AbsolutePath) {
@@ -38,25 +38,25 @@ public final class CacheLocalStorage: CacheStoring {
 
     // MARK: - CacheStoring
 
-    public func exists(hash: String) -> Single<Bool> {
+    public func exists(name _: String, hash: String) -> Single<Bool> {
         Single.create { (completed) -> Disposable in
-            completed(.success(self.lookupFramework(directory: self.cacheDirectory.appending(component: hash)) != nil))
+            completed(.success(self.lookupCompiledArtifact(directory: self.cacheDirectory.appending(component: hash)) != nil))
             return Disposables.create()
         }
     }
 
-    public func fetch(hash: String) -> Single<AbsolutePath> {
+    public func fetch(name _: String, hash: String) -> Single<AbsolutePath> {
         Single.create { (completed) -> Disposable in
-            if let path = self.lookupFramework(directory: self.cacheDirectory.appending(component: hash)) {
+            if let path = self.lookupCompiledArtifact(directory: self.cacheDirectory.appending(component: hash)) {
                 completed(.success(path))
             } else {
-                completed(.error(CacheLocalStorageError.xcframeworkNotFound(hash: hash)))
+                completed(.error(CacheLocalStorageError.compiledArtifactNotFound(hash: hash)))
             }
             return Disposables.create()
         }
     }
 
-    public func store(hash: String, paths: [AbsolutePath]) -> Completable {
+    public func store(name _: String, hash: String, paths: [AbsolutePath]) -> Completable {
         let copy = Completable.create { (completed) -> Disposable in
             let hashFolder = self.cacheDirectory.appending(component: hash)
 
@@ -85,8 +85,8 @@ public final class CacheLocalStorage: CacheStoring {
 
     // MARK: - Fileprivate
 
-    fileprivate func lookupFramework(directory: AbsolutePath) -> AbsolutePath? {
-        let extensions = ["framework", "xcframework"]
+    fileprivate func lookupCompiledArtifact(directory: AbsolutePath) -> AbsolutePath? {
+        let extensions = ["framework", "xcframework", "bundle"]
         for ext in extensions {
             if let filePath = FileHandler.shared.glob(directory, glob: "*.\(ext)").first { return filePath }
         }

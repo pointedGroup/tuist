@@ -10,10 +10,10 @@ public struct Cloud: Codable, Equatable {
 
     /// Cloud option.
     public enum Option: String, Codable, Equatable {
-        case insights
+        case analytics
     }
 
-    /// The base URL that points to the cloud server
+    /// The base URL that points to the Cloud server
     public let url: String
 
     /// The project unique identifier.
@@ -25,7 +25,7 @@ public struct Cloud: Codable, Equatable {
     /// Initializes a new Cloud configuration instance.
     /// - Parameters:
     ///   - projectId: Project unique identifier.
-    ///   - url: Base URL to the cloud server.
+    ///   - url: Base URL to the Cloud server.
     ///   - options: Cloud options.
     /// - Returns: A Cloud instance.
     public static func cloud(projectId: String, url: String, options: [Option] = []) -> Cloud {

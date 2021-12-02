@@ -1,8 +1,10 @@
-inherit_from:
-  - http://shopify.github.io/ruby-style-guide/rubocop.yml
+inherit_gem:
+  rubocop-shopify: rubocop.yml
+  rubocop-rails_config:
+    - config/rails.yml
 require:
-  - rubocop-rake
   - rubocop-minitest
+  - rubocop-rails
 
 Style/ClassAndModuleChildren:
   Enabled: false
@@ -12,20 +14,15 @@ Lint/MissingSuper:
   Enabled: false
 
 AllCops:
+  NewCops: enable
   TargetRubyVersion: 2.5
   DisplayCopNames: true
   DisplayStyleGuide: true
+  Include:
+    - Gemfile
+
   Exclude:
-    - features/**/*
-    - fixtures/**/*
-    - .build/**/*
-    - .vscode/**/*
-    - assets/**/*
-    - build/**/*
-    - Carthage/**/*
-    - Sources/**/*
-    - Tests/**/*
-    - .github/**/*
-    - website/**/*
-    - next/**/*
+    - node_modules/**/*
     - vendor/**/*
+    - db/schema.rb
+    - bin/**/*

@@ -10,15 +10,15 @@ public final class MockBuildGraphInspector: BuildGraphInspecting {
     public init() {}
     public var workspacePathStub: ((AbsolutePath) -> AbsolutePath?)?
     public func workspacePath(directory: AbsolutePath) -> AbsolutePath? {
-        workspacePathStub?(directory) ?? directory
+        workspacePathStub?(directory) ?? nil
     }
 
-    public var buildableTargetStub: ((Scheme, GraphTraversing) -> (Project, Target)?)?
-    public func buildableTarget(scheme: Scheme, graphTraverser: GraphTraversing) -> (Project, Target)? {
+    public var buildableTargetStub: ((Scheme, GraphTraversing) -> GraphTarget?)?
+    public func buildableTarget(scheme: Scheme, graphTraverser: GraphTraversing) -> GraphTarget? {
         if let buildableTargetStub = buildableTargetStub {
             return buildableTargetStub(scheme, graphTraverser)
         } else {
-            return (Project.test(), Target.test())
+            return GraphTarget.test()
         }
     }
 
@@ -45,12 +45,12 @@ public final class MockBuildGraphInspector: BuildGraphInspecting {
         }
     }
 
-    public var testableTargetStub: ((Scheme, GraphTraversing) -> ValueGraphTarget?)?
-    public func testableTarget(scheme: Scheme, graphTraverser: GraphTraversing) -> ValueGraphTarget? {
+    public var testableTargetStub: ((Scheme, GraphTraversing) -> GraphTarget?)?
+    public func testableTarget(scheme: Scheme, graphTraverser: GraphTraversing) -> GraphTarget? {
         if let testableTargetStub = testableTargetStub {
             return testableTargetStub(scheme, graphTraverser)
         } else {
-            return ValueGraphTarget.test()
+            return GraphTarget.test()
         }
     }
 
@@ -66,6 +66,16 @@ public final class MockBuildGraphInspector: BuildGraphInspecting {
     public var testSchemesStub: ((GraphTraversing) -> [Scheme])?
     public func testSchemes(graphTraverser: GraphTraversing) -> [Scheme] {
         testSchemesStub?(graphTraverser) ?? []
+    }
+
+    public var runnableTargetStub: ((Scheme, GraphTraversing) -> GraphTarget?)?
+    public func runnableTarget(scheme: Scheme, graphTraverser: GraphTraversing) -> GraphTarget? {
+        runnableTargetStub?(scheme, graphTraverser)
+    }
+
+    public var runnableSchemesStub: ((GraphTraversing) -> [Scheme])?
+    public func runnableSchemes(graphTraverser: GraphTraversing) -> [Scheme] {
+        runnableSchemesStub?(graphTraverser) ?? []
     }
 
     public var projectSchemesStub: ((GraphTraversing) -> [Scheme])?

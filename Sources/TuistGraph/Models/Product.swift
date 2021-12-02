@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Product: String, CustomStringConvertible, CaseIterable, Encodable {
+public enum Product: String, CustomStringConvertible, CaseIterable, Codable {
     case app
     case staticLibrary = "static_library"
     case dynamicLibrary = "dynamic_library"
@@ -15,7 +15,8 @@ public enum Product: String, CustomStringConvertible, CaseIterable, Encodable {
     case watch2App = "watch_2_app"
     //    case watchExtension = "watch_extension"
     case watch2Extension = "watch_2_extension"
-    //    case tvExtension = "tv_extension"
+    case tvTopShelfExtension = "tv_top_shelf_extension"
+    // case tvIntentsExtension = "tv_intents_extension"
     //    case messagesApplication = "messages_application"
     case messagesExtension = "messages_extension"
     case stickerPackExtension = "sticker_pack_extension"
@@ -49,8 +50,10 @@ public enum Product: String, CustomStringConvertible, CaseIterable, Encodable {
         //            return "watchExtension"
         case .watch2Extension:
             return "watch2Extension"
-        //        case .tvExtension:
-        //            return "tvExtension"
+        case .tvTopShelfExtension:
+            return "tvTopShelfExtension"
+        // case .tvIntentsExtension:
+        //    return "tvIntentsExtension"
         //        case .messagesApplication:
         //            return "messagesApplication"
         case .messagesExtension:
@@ -92,8 +95,10 @@ public enum Product: String, CustomStringConvertible, CaseIterable, Encodable {
         //            return "watch extension"
         case .watch2Extension:
             return "watch 2 extension"
-        //        case .tvExtension:
-        //            return "tv extension"
+        case .tvTopShelfExtension:
+            return "tv top shelf extension"
+        // case .tvIntentsExtension:
+        //    return "tv intents extension"
         //        case .messagesApplication:
         //            return "iMessage application"
         case .messagesExtension:
@@ -110,9 +115,25 @@ public enum Product: String, CustomStringConvertible, CaseIterable, Encodable {
     /// Returns true if the target can be ran.
     public var runnable: Bool {
         switch self {
-        case .app, .appClip, .commandLineTool, .watch2App:
+        case
+            .app,
+            .appClip,
+            .commandLineTool,
+            .watch2App,
+            .appExtension,
+            .messagesExtension,
+            .stickerPackExtension,
+            .tvTopShelfExtension,
+            .watch2Extension:
             return true
-        default:
+        case
+            .bundle,
+            .dynamicLibrary,
+            .framework,
+            .staticFramework,
+            .staticLibrary,
+            .unitTests,
+            .uiTests:
             return false
         }
     }
@@ -139,7 +160,8 @@ public enum Product: String, CustomStringConvertible, CaseIterable, Encodable {
         }
 
         if platform == .tvOS {
-            //            base.append(.tvExtension)
+            base.append(.tvTopShelfExtension)
+            // base.append(.tvIntentsExtension)
         }
 
         if platform == .macOS ||

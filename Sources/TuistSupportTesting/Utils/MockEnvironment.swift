@@ -18,11 +18,11 @@ public class MockEnvironment: Environmenting {
     }
 
     public var isVerbose: Bool = false
-    public var cacheDirectoryStub: AbsolutePath?
     public var queueDirectoryStub: AbsolutePath?
     public var shouldOutputBeColoured: Bool = false
     public var isStandardOutputInteractive: Bool = false
     public var tuistVariables: [String: String] = [:]
+    public var tuistConfigVariables: [String: String] = [:]
     public var manifestLoadingVariables: [String: String] = [:]
     public var isStatsEnabled: Bool = true
 
@@ -38,28 +38,8 @@ public class MockEnvironment: Environmenting {
         nil
     }
 
-    public var cacheDirectory: AbsolutePath {
-        cacheDirectoryStub ?? directory.path.appending(component: "Cache")
-    }
-
     public var queueDirectory: AbsolutePath {
         queueDirectoryStub ?? directory.path.appending(component: Constants.AsyncQueue.directoryName)
-    }
-
-    public var projectDescriptionHelpersCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "ProjectDescriptionHelpers")
-    }
-
-    public var projectsCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "Projects")
-    }
-
-    public var testsCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "TestsCache")
-    }
-
-    public var buildCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "BuildCache")
     }
 
     func path(version: String) -> AbsolutePath {

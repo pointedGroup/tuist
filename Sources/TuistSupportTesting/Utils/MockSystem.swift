@@ -42,6 +42,7 @@ public final class MockSystem: Systeming {
                 standardError: standardError
             )
         }
+        calls.append(arguments.joined(separator: " "))
     }
 
     public func run(_ arguments: String...) throws {
@@ -193,8 +194,12 @@ public final class MockSystem: Systeming {
         }
     }
 
-    public func called(_ args: String...) -> Bool {
+    public func called(_ args: [String]) -> Bool {
         let command = args.joined(separator: " ")
         return calls.contains(command)
+    }
+
+    public func called(_ args: String...) -> Bool {
+        called(args)
     }
 }

@@ -33,12 +33,12 @@ struct NodeStyleAttributes {
     }
 }
 
-extension ValueGraphTarget {
+extension GraphTarget {
     var styleAttributes: NodeStyleAttributes {
         switch target.product {
         case .app, .watch2App, .commandLineTool, .appClip:
             return .init(fillColorName: .deepskyblue, strokeWidth: 1.5, shape: .box3d)
-        case .appExtension, .watch2Extension:
+        case .appExtension, .watch2Extension, .tvTopShelfExtension:
             return .init(fillColorName: .deepskyblue2, shape: .component)
         case .messagesExtension, .stickerPackExtension:
             return .init(fillColorName: .springgreen2, shape: .component)
@@ -58,19 +58,19 @@ extension ValueGraphTarget {
     }
 }
 
-extension ValueGraphDependency {
+extension GraphDependency {
     func styleAttributes(
         graphTraverser: GraphTraversing
     ) -> NodeStyleAttributes? {
         switch self {
         case .sdk:
             return .init(fillColorName: .violet, shape: .rectangle)
-        case .cocoapods:
-            return .init(fillColorName: .red2, textColorName: .white)
         case .framework:
             return .init(fillColorName: .darkgoldenrod3, shape: .trapezium)
         case .library:
             return .init(fillColorName: .lightgray, shape: .folder)
+        case .bundle:
+            return .init(fillColorName: .aliceblue, shape: .box)
         case .packageProduct:
             return .init(fillColorName: .tan4, textColorName: .white, shape: .tab)
         case .xcframework:

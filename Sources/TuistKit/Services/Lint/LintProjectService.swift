@@ -28,72 +28,52 @@ enum LintProjectServiceError: FatalError, Equatable {
 }
 
 final class LintProjectService {
-    /// Graph linter
     private let graphLinter: GraphLinting
     private let environmentLinter: EnvironmentLinting
-    private let manifestLoading: ManifestLoading
-    private let graphLoader: GraphLoading
     private let configLoader: ConfigLoading
+    private let manifestGraphLoader: ManifestGraphLoading
 
     convenience init() {
-        let manifestLoader = ManifestLoader()
-        let modelLoader = GeneratorModelLoader(
-            manifestLoader: manifestLoader,
-            manifestLinter: AnyManifestLinter()
-        )
-        let graphLoader = GraphLoader(modelLoader: modelLoader)
+        let manifestLoader = ManifestLoaderFactory()
+            .createManifestLoader()
         let configLoader = ConfigLoader(manifestLoader: manifestLoader)
         let graphLinter = GraphLinter()
         let environmentLinter = EnvironmentLinter()
+        let manifestGraphLoader = ManifestGraphLoader(manifestLoader: manifestLoader)
         self.init(
             graphLinter: graphLinter,
             environmentLinter: environmentLinter,
-            manifestLoading: manifestLoader,
-            graphLoader: graphLoader,
-            configLoader: configLoader
+            configLoader: configLoader,
+            manifestGraphLoader: manifestGraphLoader
         )
     }
 
     init(
         graphLinter: GraphLinting,
         environmentLinter: EnvironmentLinting,
-        manifestLoading: ManifestLoading,
-        graphLoader: GraphLoading,
-        configLoader: ConfigLoading
+        configLoader: ConfigLoading,
+        manifestGraphLoader: ManifestGraphLoading
     ) {
         self.graphLinter = graphLinter
         self.environmentLinter = environmentLinter
-        self.manifestLoading = manifestLoading
-        self.graphLoader = graphLoader
         self.configLoader = configLoader
+        self.manifestGraphLoader = manifestGraphLoader
     }
 
     func run(path: String?) throws {
         let path = self.path(path)
 
-        // Load graph
-        let manifests = manifestLoading.manifests(at: path)
-        var graph: Graph!
-
-        logger.notice("Loading the dependency graph")
-        if manifests.contains(.workspace) {
-            logger.notice("Loading workspace at \(path.pathString)")
-            graph = try graphLoader.loadWorkspace(path: path)
-        } else if manifests.contains(.project) {
-            logger.notice("Loading project at \(path.pathString)")
-            (graph, _) = try graphLoader.loadProject(path: path)
-        } else {
-            throw LintProjectServiceError.manifestNotFound(path)
-        }
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        logger.notice("Loading the dependency graph at \(path)")
+        let graph = try manifestGraphLoader.loadGraph(at: path)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         logger.notice("Running linters")
-        let config = try configLoader.loadConfig(path: path)
 
+        let config = try configLoader.loadConfig(path: path)
         var issues: [LintingIssue] = []
         logger.notice("Linting the environment")
         issues.append(contentsOf: try environmentLinter.lint(config: config))
+
         logger.notice("Linting the loaded dependency graph")
         issues.append(contentsOf: graphLinter.lint(graphTraverser: graphTraverser))
 

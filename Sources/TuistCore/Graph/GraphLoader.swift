@@ -1,315 +1,366 @@
 import Foundation
 import TSCBasic
 import TuistGraph
-import TuistSupport
 
-public protocol GraphLoading: AnyObject {
-    /// Path to the directory that contains the project.
-    /// - Parameter path: Path to the directory that contains the project.
-    func loadProject(path: AbsolutePath) throws -> (Graph, Project)
+// MARK: - GraphLoading
 
-    /// Loads the graph for the workspace in the given directory.
-    /// - Parameter path: Path to the directory that contains the workspace.
-    func loadWorkspace(path: AbsolutePath) throws -> Graph
+public protocol GraphLoading {
+    func loadWorkspace(workspace: Workspace, projects: [Project]) throws -> Graph
+    func loadProject(at path: AbsolutePath, projects: [Project]) throws -> (Project, Graph)
 }
 
-public class GraphLoader: GraphLoading {
-    // MARK: - Attributes
+// MARK: - GraphLoader
 
-    fileprivate let modelLoader: GeneratorModelLoading
+// swiftlint:disable:next type_body_length
+public final class GraphLoader: GraphLoading {
+    private let frameworkMetadataProvider: FrameworkMetadataProviding
+    private let libraryMetadataProvider: LibraryMetadataProviding
+    private let xcframeworkMetadataProvider: XCFrameworkMetadataProviding
+    private let systemFrameworkMetadataProvider: SystemFrameworkMetadataProviding
 
-    /// Utility to load framework nodes by parsing their information from disk.
-    fileprivate let frameworkNodeLoader: FrameworkNodeLoading
-
-    /// Utility to load xcframework nodes by parsing their information from disk.
-    fileprivate let xcframeworkNodeLoader: XCFrameworkNodeLoading
-
-    /// Utility to load library nodes by parsing their information from disk.
-    fileprivate let libraryNodeLoader: LibraryNodeLoading
-
-    // MARK: - Init
-
-    public convenience init(modelLoader: GeneratorModelLoading) {
+    public convenience init() {
         self.init(
-            modelLoader: modelLoader,
-            frameworkNodeLoader: FrameworkNodeLoader(),
-            xcframeworkNodeLoader: XCFrameworkNodeLoader(),
-            libraryNodeLoader: LibraryNodeLoader()
+            frameworkMetadataProvider: FrameworkMetadataProvider(),
+            libraryMetadataProvider: LibraryMetadataProvider(),
+            xcframeworkMetadataProvider: XCFrameworkMetadataProvider(),
+            systemFrameworkMetadataProvider: SystemFrameworkMetadataProvider()
         )
     }
 
-    public init(modelLoader: GeneratorModelLoading,
-                frameworkNodeLoader: FrameworkNodeLoading,
-                xcframeworkNodeLoader: XCFrameworkNodeLoading,
-                libraryNodeLoader: LibraryNodeLoading)
-    {
-        self.modelLoader = modelLoader
-        self.frameworkNodeLoader = frameworkNodeLoader
-        self.xcframeworkNodeLoader = xcframeworkNodeLoader
-        self.libraryNodeLoader = libraryNodeLoader
+    public init(
+        frameworkMetadataProvider: FrameworkMetadataProviding,
+        libraryMetadataProvider: LibraryMetadataProviding,
+        xcframeworkMetadataProvider: XCFrameworkMetadataProviding,
+        systemFrameworkMetadataProvider: SystemFrameworkMetadataProviding
+    ) {
+        self.frameworkMetadataProvider = frameworkMetadataProvider
+        self.libraryMetadataProvider = libraryMetadataProvider
+        self.xcframeworkMetadataProvider = xcframeworkMetadataProvider
+        self.systemFrameworkMetadataProvider = systemFrameworkMetadataProvider
     }
 
     // MARK: - GraphLoading
 
-    public func loadProject(path: AbsolutePath) throws -> (Graph, Project) {
-        let graphLoaderCache = GraphLoaderCache()
-        let graphCircularDetector = GraphCircularDetector()
+    public func loadWorkspace(workspace: Workspace, projects: [Project]) throws -> Graph {
+        let cache = Cache(projects: projects)
+        let cycleDetector = GraphCircularDetector()
 
-        let project = try loadProject(at: path, graphLoaderCache: graphLoaderCache, graphCircularDetector: graphCircularDetector)
-
-        let entryNodes: [GraphNode] = try project.targets.map { target in
-            try self.loadTarget(name: target.name, path: path, graphLoaderCache: graphLoaderCache, graphCircularDetector: graphCircularDetector)
-        }
-        let workspace = Workspace(
-            path: project.path,
-            xcWorkspacePath: project.path.appending(component: "\(project.name).xcworkspace"),
-            name: project.name,
-            projects: [project.path]
-        )
-
-        let graph = Graph(
-            name: project.name,
-            entryPath: path,
-            cache: graphLoaderCache,
-            entryNodes: entryNodes,
-            workspace: workspace
-        )
-        return (graph, project)
-    }
-
-    public func loadWorkspace(path: AbsolutePath) throws -> Graph {
-        let graphLoaderCache = GraphLoaderCache()
-        let graphCircularDetector = GraphCircularDetector()
-        var workspace = try modelLoader.loadWorkspace(at: path)
-
-        let projects = try workspace.projects
-            .map { projectPath in
-                try self.loadProject(
-                    at: projectPath,
-                    graphLoaderCache: graphLoaderCache,
-                    graphCircularDetector: graphCircularDetector
-                )
-            }
-
-        let entryNodes = try projects.flatMap { (project) -> [TargetNode] in
-            let projectPath = project.path
-            let projectManifest = project
-            return try projectManifest.targets.map { target in
-                try self.loadTarget(
-                    name: target.name,
-                    path: projectPath,
-                    graphLoaderCache: graphLoaderCache,
-                    graphCircularDetector: graphCircularDetector
-                )
-            }
+        try workspace.projects.forEach {
+            try loadProject(
+                path: $0,
+                cache: cache,
+                cycleDetector: cycleDetector
+            )
         }
 
+        let updatedWorkspace = workspace.replacing(projects: cache.loadedProjects.keys.sorted())
         let graph = Graph(
-            name: workspace.name,
-            entryPath: path,
-            cache: graphLoaderCache,
-            entryNodes: entryNodes,
-            workspace: workspace
+            name: updatedWorkspace.name,
+            path: updatedWorkspace.path,
+            workspace: updatedWorkspace,
+            projects: cache.loadedProjects,
+            packages: cache.packages,
+            targets: cache.loadedTargets,
+            dependencies: cache.dependencies
         )
         return graph
     }
 
-    // MARK: - Fileprivate
+    public func loadProject(at path: AbsolutePath, projects: [Project]) throws -> (Project, Graph) {
+        let cache = Cache(projects: projects)
+        guard let rootProject = cache.allProjects[path] else {
+            throw GraphLoadingError.missingProject(path)
+        }
+        let cycleDetector = GraphCircularDetector()
+        try loadProject(path: path, cache: cache, cycleDetector: cycleDetector)
 
-    /// Loads the project at the given path. If the project has already been loaded and cached, it returns it from the cache.
-    /// - Parameters:
-    ///   - path: Path to the directory that contains the project.
-    ///   - cache: Graph loading cache.
-    ///   - graphCircularDetector: Graph circular detector
-    fileprivate func loadProject(at path: AbsolutePath,
-                                 graphLoaderCache: GraphLoaderCaching,
-                                 graphCircularDetector: GraphCircularDetecting) throws -> Project
-    {
-        if let project = graphLoaderCache.project(path) {
-            return project
-        } else {
-            let project = try modelLoader.loadProject(at: path)
-            graphLoaderCache.add(project: project)
+        let workspace = Workspace(
+            path: path,
+            xcWorkspacePath: path.appending(component: "\(rootProject.name).xcworkspace"),
+            name: rootProject.name,
+            projects: cache.loadedProjects.keys.sorted()
+        )
+        let graph = Graph(
+            name: rootProject.name,
+            path: path,
+            workspace: workspace,
+            projects: cache.loadedProjects,
+            packages: cache.packages,
+            targets: cache.loadedTargets,
+            dependencies: cache.dependencies
+        )
+        return (rootProject, graph)
+    }
 
-            for target in project.targets {
-                if graphLoaderCache.targetNode(path, name: target.name) != nil { continue }
-                _ = try loadTarget(
-                    name: target.name,
-                    path: path,
-                    graphLoaderCache: graphLoaderCache,
-                    graphCircularDetector: graphCircularDetector
-                )
-            }
+    // MARK: - Private
 
-            return project
+    private func loadProject(
+        path: AbsolutePath,
+        cache: Cache,
+        cycleDetector: GraphCircularDetector
+    ) throws {
+        guard !cache.projectLoaded(path: path) else {
+            return
+        }
+        guard let project = cache.allProjects[path] else {
+            throw GraphLoadingError.missingProject(path)
+        }
+        cache.add(project: project)
+
+        try project.targets.forEach {
+            try loadTarget(
+                path: path,
+                name: $0.name,
+                cache: cache,
+                cycleDetector: cycleDetector
+            )
         }
     }
 
-    /// Loads the given target into the cache.
-    /// - Parameters:
-    ///   - name: Name of the target to be loaded.
-    ///   - path: Path to the directory that contains the project.
-    ///   - graphLoaderCache: Graph loader cache.
-    ///   - graphCircularDetector: Graph circular dependency detector.
-    fileprivate func loadTarget(name: String,
-                                path: AbsolutePath,
-                                graphLoaderCache: GraphLoaderCaching,
-                                graphCircularDetector: GraphCircularDetecting) throws -> TargetNode
-    {
-        if let targetNode = graphLoaderCache.targetNode(path, name: name) { return targetNode }
-
-        let project = try loadProject(at: path, graphLoaderCache: graphLoaderCache, graphCircularDetector: graphCircularDetector)
-
-        guard let target = project.targets.first(where: { $0.name == name }) else {
+    private func loadTarget(
+        path: AbsolutePath,
+        name: String,
+        cache: Cache,
+        cycleDetector: GraphCircularDetector
+    ) throws {
+        guard !cache.targetLoaded(path: path, name: name) else {
+            return
+        }
+        guard cache.allProjects[path] != nil else {
+            throw GraphLoadingError.missingProject(path)
+        }
+        guard let referencedTargetProject = cache.allTargets[path],
+            let target = referencedTargetProject[name]
+        else {
             throw GraphLoadingError.targetNotFound(name, path)
         }
 
-        let targetNode = TargetNode(project: project, target: target, dependencies: [])
-        graphLoaderCache.add(targetNode: targetNode)
-
-        let dependencies: [GraphNode] = try target.dependencies.map {
+        cache.add(target: target, path: path)
+        let dependencies = try target.dependencies.map {
             try loadDependency(
-                for: $0,
                 path: path,
-                name: name,
-                platform: target.platform,
-                graphLoaderCache: graphLoaderCache,
-                graphCircularDetector: graphCircularDetector
+                fromTarget: target.name,
+                fromPlatform: target.platform,
+                dependency: $0,
+                cache: cache,
+                cycleDetector: cycleDetector
             )
         }
 
-        targetNode.dependencies = dependencies
+        try cycleDetector.complete()
 
-        try graphCircularDetector.complete()
-
-        return targetNode
+        if !dependencies.isEmpty {
+            cache.dependencies[.target(name: name, path: path)] = Set(dependencies)
+        }
     }
 
-    /// Loads a target dependency into the cache.
-    /// - Parameters:
-    ///   - dependency: Dependency to be loaded.
-    ///   - path: Path to the project that defines the dependency.
-    ///   - name: Name of the dependency to be loaded.
-    ///   - platform: Platform of the target whose dependency is being loaded.
-    ///   - graphLoaderCache: Graph loader cache.
-    ///   - graphCircularDetector: Graph circular dependency detector.
-    fileprivate func loadDependency(for dependency: TargetDependency,
-                                    path: AbsolutePath,
-                                    name: String,
-                                    platform: Platform,
-                                    graphLoaderCache: GraphLoaderCaching,
-                                    graphCircularDetector: GraphCircularDetecting) throws -> GraphNode
-    {
+    private func loadDependency(
+        path: AbsolutePath,
+        fromTarget: String,
+        fromPlatform: Platform,
+        dependency: TargetDependency,
+        cache: Cache,
+        cycleDetector: GraphCircularDetector
+    ) throws -> GraphDependency {
         switch dependency {
-        // A target within the same project.
-        case let .target(target):
-            let circularFrom = GraphCircularDetectorNode(path: path, name: name)
-            let circularTo = GraphCircularDetectorNode(path: path, name: target)
-            graphCircularDetector.start(from: circularFrom, to: circularTo)
-            return try loadTarget(name: target, path: path, graphLoaderCache: graphLoaderCache, graphCircularDetector: graphCircularDetector)
+        case let .target(toTarget):
+            // A target within the same project.
+            let circularFrom = GraphCircularDetectorNode(path: path, name: fromTarget)
+            let circularTo = GraphCircularDetectorNode(path: path, name: toTarget)
+            cycleDetector.start(from: circularFrom, to: circularTo)
+            try loadTarget(
+                path: path,
+                name: toTarget,
+                cache: cache,
+                cycleDetector: cycleDetector
+            )
+            return .target(name: toTarget, path: path)
 
-        // A target from another project
-        case let .project(target, projectPath):
-            let circularFrom = GraphCircularDetectorNode(path: path, name: name)
-            let circularTo = GraphCircularDetectorNode(path: projectPath, name: target)
-            graphCircularDetector.start(from: circularFrom, to: circularTo)
-            return try loadTarget(name: target, path: projectPath, graphLoaderCache: graphLoaderCache, graphCircularDetector: graphCircularDetector)
+        case let .project(toTarget, projectPath):
+            // A target from another project
+            let circularFrom = GraphCircularDetectorNode(path: path, name: fromTarget)
+            let circularTo = GraphCircularDetectorNode(path: projectPath, name: toTarget)
+            cycleDetector.start(from: circularFrom, to: circularTo)
+            try loadProject(path: projectPath, cache: cache, cycleDetector: cycleDetector)
+            try loadTarget(
+                path: projectPath,
+                name: toTarget,
+                cache: cache,
+                cycleDetector: cycleDetector
+            )
+            return .target(name: toTarget, path: projectPath)
 
-        // Precompiled framework
         case let .framework(frameworkPath):
-            return try loadFrameworkNode(frameworkPath: frameworkPath, graphLoaderCache: graphLoaderCache)
+            return try loadFramework(path: frameworkPath, cache: cache)
 
-        // Precompiled library
         case let .library(libraryPath, publicHeaders, swiftModuleMap):
-            return try loadLibraryNode(
+            return try loadLibrary(
+                path: libraryPath,
                 publicHeaders: publicHeaders,
                 swiftModuleMap: swiftModuleMap,
-                libraryPath: libraryPath,
-                graphLoaderCache: graphLoaderCache
+                cache: cache
             )
-        // XCFramework
-        case let .xcFramework(frameworkPath):
-            return try loadXCFrameworkNode(path: frameworkPath, graphLoaderCache: graphLoaderCache)
 
-        // System SDK
+        case let .xcframework(frameworkPath):
+            return try loadXCFramework(path: frameworkPath, cache: cache)
+
         case let .sdk(name, status):
-            return try SDKNode(name: name, platform: platform, status: status, source: .system)
+            return try loadSDK(name: name, platform: fromPlatform, status: status, source: .system)
 
-        // CocoaPods
-        case let .cocoapods(podsPath):
-            return loadCocoaPodsNode(path: podsPath, graphLoaderCache: graphLoaderCache)
-
-        // Swift Package
         case let .package(product):
-            return PackageProductNode(product: product, path: path)
+            return try loadPackage(fromPath: path, productName: product)
 
-        // XCTest
         case .xctest:
-            return try SDKNode(name: SDKNode.xctestFrameworkName, platform: platform, status: .required, source: .developer)
+            return try loadXCTestSDK(platform: fromPlatform)
         }
     }
 
-    /// Loads the precompiled framework node at the given path.
-    /// - Parameters:
-    ///   - frameworkPath: Path to the .framework.
-    ///   - graphLoaderCache: Graph loader cache.
-    fileprivate func loadFrameworkNode(frameworkPath: AbsolutePath, graphLoaderCache: GraphLoaderCaching) throws -> FrameworkNode {
-        if let frameworkNode = graphLoaderCache.precompiledNode(frameworkPath) as? FrameworkNode { return frameworkNode }
-        let framewokNode = try frameworkNodeLoader.load(path: frameworkPath)
-        graphLoaderCache.add(precompiledNode: framewokNode)
-        return framewokNode
+    private func loadFramework(path: AbsolutePath, cache: Cache) throws -> GraphDependency {
+        if let loaded = cache.frameworks[path] {
+            return loaded
+        }
+
+        let metadata = try frameworkMetadataProvider.loadMetadata(at: path)
+        let framework: GraphDependency = .framework(
+            path: metadata.path,
+            binaryPath: metadata.binaryPath,
+            dsymPath: metadata.dsymPath,
+            bcsymbolmapPaths: metadata.bcsymbolmapPaths,
+            linking: metadata.linking,
+            architectures: metadata.architectures,
+            isCarthage: metadata.isCarthage
+        )
+        cache.add(framework: framework, at: path)
+        return framework
     }
 
-    /// Loads the precompiled library node at the given paths.
-    /// - Parameters:
-    ///   - publicHeaders: Path to the directory that contains the public headers.
-    ///   - swiftModuleMap: Path to the Swift modulemap file.
-    ///   - libraryPath: Path to the library's .a binary.
-    ///   - graphLoaderCache: Graph loader cache.
-    fileprivate func loadLibraryNode(publicHeaders: AbsolutePath,
-                                     swiftModuleMap: AbsolutePath?,
-                                     libraryPath: AbsolutePath,
-                                     graphLoaderCache: GraphLoaderCaching) throws -> LibraryNode
-    {
-        if let libraryNode = graphLoaderCache.precompiledNode(libraryPath) as? LibraryNode { return libraryNode }
-        let libraryNode = try libraryNodeLoader.load(
-            path: libraryPath,
+    private func loadLibrary(
+        path: AbsolutePath,
+        publicHeaders: AbsolutePath,
+        swiftModuleMap: AbsolutePath?,
+        cache: Cache
+    ) throws -> GraphDependency {
+        if let loaded = cache.libraries[path] {
+            return loaded
+        }
+
+        let metadata = try libraryMetadataProvider.loadMetadata(
+            at: path,
             publicHeaders: publicHeaders,
             swiftModuleMap: swiftModuleMap
         )
-
-        graphLoaderCache.add(precompiledNode: libraryNode)
-        return libraryNode
+        let library: GraphDependency = .library(
+            path: metadata.path,
+            publicHeaders: metadata.publicHeaders,
+            linking: metadata.linking,
+            architectures: metadata.architectures,
+            swiftModuleMap: metadata.swiftModuleMap
+        )
+        cache.add(library: library, at: path)
+        return library
     }
 
-    /// Loads the CocoaPods node. If it it exists in the cache, it returns it from the cache.
-    /// Otherwise, it initializes it, stores it in the cache, and then returns it.
-    ///
-    /// - Parameters:
-    ///   - path: Path to the directory that contains the Podfile.
-    ///   - graphLoaderCache: Graph loader cache.
-    /// - Returns: The initialized instance of the CocoaPods node.
-    fileprivate func loadCocoaPodsNode(path: AbsolutePath,
-                                       graphLoaderCache: GraphLoaderCaching) -> CocoaPodsNode
-    {
-        if let cached = graphLoaderCache.cocoapods(path) { return cached }
-        let node = CocoaPodsNode(path: path)
-        graphLoaderCache.add(cocoapods: node)
-        return node
-    }
-
-    /// Loads the XCFramework node. If it it exists in the cache, it returns it from the cache.
-    /// Otherwise, it initializes it, stores it in the cache, and then returns it.
-    ///
-    /// - Parameters:
-    ///   - xcframeworkPath: Path to the .xcframework.
-    ///   - graphLoaderCache: Graph loader cache.
-    fileprivate func loadXCFrameworkNode(path: AbsolutePath, graphLoaderCache: GraphLoaderCaching) throws -> XCFrameworkNode {
-        if let cachedXCFramework = graphLoaderCache.precompiledNode(path) as? XCFrameworkNode {
-            return cachedXCFramework
+    private func loadXCFramework(path: AbsolutePath, cache: Cache) throws -> GraphDependency {
+        if let loaded = cache.xcframeworks[path] {
+            return loaded
         }
-        let xcframework = try xcframeworkNodeLoader.load(path: path)
-        graphLoaderCache.add(precompiledNode: xcframework)
+
+        let metadata = try xcframeworkMetadataProvider.loadMetadata(at: path)
+        let xcframework: GraphDependency = .xcframework(
+            path: metadata.path,
+            infoPlist: metadata.infoPlist,
+            primaryBinaryPath: metadata.primaryBinaryPath,
+            linking: metadata.linking
+        )
+        cache.add(xcframework: xcframework, at: path)
         return xcframework
+    }
+
+    private func loadSDK(name: String,
+                         platform: Platform,
+                         status: SDKStatus,
+                         source: SDKSource) throws -> GraphDependency
+    {
+        let metadata = try systemFrameworkMetadataProvider.loadMetadata(sdkName: name, status: status, platform: platform, source: source)
+        return .sdk(name: metadata.name, path: metadata.path, status: metadata.status, source: metadata.source)
+    }
+
+    private func loadXCTestSDK(platform: Platform) throws -> GraphDependency {
+        let metadata = try systemFrameworkMetadataProvider.loadXCTestMetadata(platform: platform)
+        return .sdk(name: metadata.name, path: metadata.path, status: metadata.status, source: metadata.source)
+    }
+
+    private func loadPackage(fromPath: AbsolutePath, productName: String) throws -> GraphDependency {
+        // TODO: `fromPath` isn't quite correct as it reflects the path where the dependency was declared
+        // and doesn't uniquely identify it. It's been copied from the previous implementation to maintain
+        // existing behaviour and should be fixed separately
+        .packageProduct(
+            path: fromPath,
+            product: productName
+        )
+    }
+
+    private final class Cache {
+        let allProjects: [AbsolutePath: Project]
+        let allTargets: [AbsolutePath: [String: Target]]
+
+        var loadedProjects: [AbsolutePath: Project] = [:]
+        var loadedTargets: [AbsolutePath: [String: Target]] = [:]
+        var dependencies: [GraphDependency: Set<GraphDependency>] = [:]
+        var frameworks: [AbsolutePath: GraphDependency] = [:]
+        var libraries: [AbsolutePath: GraphDependency] = [:]
+        var xcframeworks: [AbsolutePath: GraphDependency] = [:]
+        var packages: [AbsolutePath: [String: Package]] = [:]
+
+        init(projects: [Project]) {
+            let allProjects = Dictionary(uniqueKeysWithValues: projects.map { ($0.path, $0) })
+            let allTargets = allProjects.mapValues {
+                Dictionary(uniqueKeysWithValues: $0.targets.map { ($0.name, $0) })
+            }
+            self.allProjects = allProjects
+            self.allTargets = allTargets
+        }
+
+        func add(project: Project) {
+            loadedProjects[project.path] = project
+            project.packages.forEach {
+                packages[project.path, default: [:]][$0.name] = $0
+            }
+        }
+
+        func add(target: Target, path: AbsolutePath) {
+            loadedTargets[path, default: [:]][target.name] = target
+        }
+
+        func add(framework: GraphDependency, at path: AbsolutePath) {
+            frameworks[path] = framework
+        }
+
+        func add(xcframework: GraphDependency, at path: AbsolutePath) {
+            xcframeworks[path] = xcframework
+        }
+
+        func add(library: GraphDependency, at path: AbsolutePath) {
+            libraries[path] = library
+        }
+
+        func targetLoaded(path: AbsolutePath, name: String) -> Bool {
+            loadedTargets[path]?[name] != nil
+        }
+
+        func projectLoaded(path: AbsolutePath) -> Bool {
+            loadedProjects[path] != nil
+        }
+    }
+}
+
+private extension Package {
+    var name: String {
+        switch self {
+        case let .local(path: path):
+            return path.pathString
+        case let .remote(url: url, requirement: _):
+            return url
+        }
     }
 }

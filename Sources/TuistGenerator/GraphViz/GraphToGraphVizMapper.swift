@@ -5,27 +5,29 @@ import TuistCore
 import TuistGraph
 
 /// Interface that describes a mapper that convers a project graph into a GraphViz graph.
-protocol GraphToGraphVizMapping {
+public protocol GraphToGraphVizMapping {
     /// Maps the project graph into a dot graph representation.
     ///
-    /// - Parameter graph: ValueGraph to be converted into a GraphViz.Graph.
+    /// - Parameter graph: Graph to be converted into a GraphViz.Graph.
     /// - Returns: The GraphViz.Graph representation.
-    func map(graph: ValueGraph, skipTestTargets: Bool, skipExternalDependencies: Bool, targetsToFilter: [String]) -> GraphViz.Graph
+    func map(graph: TuistGraph.Graph, skipTestTargets: Bool, skipExternalDependencies: Bool, targetsToFilter: [String]) -> GraphViz.Graph
 }
 
-final class GraphToGraphVizMapper: GraphToGraphVizMapping {
+public final class GraphToGraphVizMapper: GraphToGraphVizMapping {
+    public init() {}
+
     /// Maps the project graph into a GraphViz graph representation.
     ///
-    /// - Parameter graph: ValueGraph to be converted into a GraphViz.Graph.
+    /// - Parameter graph: Graph to be converted into a GraphViz.Graph.
     /// - Returns: The GraphViz.Graph representation.
-    func map(graph: ValueGraph, skipTestTargets: Bool, skipExternalDependencies: Bool, targetsToFilter: [String]) -> GraphViz.Graph {
+    public func map(graph: TuistGraph.Graph, skipTestTargets: Bool, skipExternalDependencies: Bool, targetsToFilter: [String]) -> GraphViz.Graph {
         var nodes: [GraphViz.Node] = []
         var dependencies: [GraphViz.Edge] = []
         var graphVizGraph = GraphViz.Graph(directed: true)
 
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
-        let filteredTargets: Set<ValueGraphTarget> = graphTraverser.allTargets().filter { target in
+        let filteredTargets: Set<GraphTarget> = graphTraverser.allTargets().filter { target in
             if skipTestTargets, graphTraverser.dependsOnXCTest(path: target.path, name: target.target.name) {
                 return false
             }
@@ -37,7 +39,7 @@ final class GraphToGraphVizMapper: GraphToGraphVizMapping {
             return true
         }
 
-        let filteredTargetsAndDependencies: Set<ValueGraphTarget> = filteredTargets.union(
+        let filteredTargetsAndDependencies: Set<GraphTarget> = filteredTargets.union(
             transitiveClosure(Array(filteredTargets)) { target in
                 Array(graphTraverser.directTargetDependencies(path: target.path, name: target.target.name))
             }
@@ -77,12 +79,12 @@ final class GraphToGraphVizMapper: GraphToGraphVizMapping {
     }
 }
 
-private extension ValueGraphDependency {
+private extension GraphDependency {
     var isExternal: Bool {
         switch self {
         case .target:
             return false
-        case .framework, .xcframework, .library, .packageProduct, .sdk, .cocoapods:
+        case .framework, .xcframework, .library, .bundle, .packageProduct, .sdk:
             return true
         }
     }
@@ -116,6 +118,8 @@ private extension ValueGraphDependency {
             swiftModuleMap: _
         ):
             return path.basenameWithoutExt
+        case let .bundle(path):
+            return path.basenameWithoutExt
         case let .packageProduct(path: _, product: product):
             return product
         case let .sdk(
@@ -125,8 +129,6 @@ private extension ValueGraphDependency {
             source: _
         ):
             return String(name.split(separator: ".").first ?? "")
-        case .cocoapods:
-            return "CocoaPods"
         }
     }
 }

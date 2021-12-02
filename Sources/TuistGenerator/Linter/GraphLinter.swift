@@ -6,6 +6,7 @@ import TuistSupport
 
 public protocol GraphLinting: AnyObject {
     func lint(graphTraverser: GraphTraversing) -> [LintingIssue]
+    func lintCodeCoverageMode(_ mode: CodeCoverageMode?, graphTraverser: GraphTraversing) -> [LintingIssue]
 }
 
 // swiftlint:disable type_body_length
@@ -48,14 +49,51 @@ public class GraphLinter: GraphLinting {
         return issues
     }
 
+    public func lintCodeCoverageMode(_ mode: CodeCoverageMode?, graphTraverser: GraphTraversing) -> [LintingIssue] {
+        switch mode {
+        case .none, .all: return []
+        case .relevant:
+            let targets = graphTraverser.workspace.codeCoverageTargets(mode: mode, projects: Array(graphTraverser.projects.values))
+
+            if targets.isEmpty {
+                return [
+                    LintingIssue(
+                        reason: "Cannot find any any targets configured for code coverage, perhaps you wanted to use `CodeCoverageMode.all`?",
+                        severity: .warning
+                    ),
+                ]
+            }
+
+            return []
+        case let .targets(targets):
+            if targets.isEmpty {
+                return [LintingIssue(reason: "List of targets for code coverage is empty", severity: .warning)]
+            }
+
+            let nonExistingTargets = targets
+                .filter { target in
+                    graphTraverser.target(
+                        path: target.projectPath,
+                        name: target.name
+                    ) == nil
+                }
+
+            guard !nonExistingTargets.isEmpty else { return [] }
+
+            return nonExistingTargets.map {
+                LintingIssue(reason: "Target '\($0.name)' at '\($0.projectPath)' doesn't exist", severity: .error)
+            }
+        }
+    }
+
     // MARK: - Fileprivate
 
     func lintDependencies(graphTraverser: GraphTraversing) -> [LintingIssue] {
         var issues: [LintingIssue] = []
         let dependencyIssues = graphTraverser.dependencies.flatMap { (fromDependency, toDependencies) -> [LintingIssue] in
             toDependencies.flatMap { (toDependency) -> [LintingIssue] in
-                guard case let ValueGraphDependency.target(fromTargetName, fromTargetPath) = fromDependency else { return [] }
-                guard case let ValueGraphDependency.target(toTargetName, toTargetPath) = toDependency else { return [] }
+                guard case let GraphDependency.target(fromTargetName, fromTargetPath) = fromDependency else { return [] }
+                guard case let GraphDependency.target(toTargetName, toTargetPath) = toDependency else { return [] }
                 guard let fromTarget = graphTraverser.target(path: fromTargetPath, name: fromTargetName) else { return [] }
                 guard let toTarget = graphTraverser.target(path: toTargetPath, name: toTargetName) else { return [] }
                 return lintDependency(from: fromTarget, to: toTarget)
@@ -71,7 +109,7 @@ public class GraphLinter: GraphLinting {
         return issues
     }
 
-    private func lintDependency(from: ValueGraphTarget, to: ValueGraphTarget) -> [LintingIssue] {
+    private func lintDependency(from: GraphTarget, to: GraphTarget) -> [LintingIssue] {
         var issues: [LintingIssue] = []
 
         let fromTarget = LintableTarget(
@@ -106,7 +144,7 @@ public class GraphLinter: GraphLinting {
             $0.formUnion(Set($1.settings.configurations.keys))
         }
 
-        let projectBuildConfigurations = graphTraverser.projects.compactMap { project -> (name: String, buildConfigurations: Set<BuildConfiguration>)? in
+        let projectBuildConfigurations = graphTraverser.projects.compactMap { project in
             (name: project.value.name, buildConfigurations: Set(project.value.settings.configurations.keys))
         }
 
@@ -201,7 +239,7 @@ public class GraphLinter: GraphLinting {
         return issues
     }
 
-    private func lint(watchApp: ValueGraphTarget, parentApp: ValueGraphTarget) -> [LintingIssue] {
+    private func lint(watchApp: GraphTarget, parentApp: GraphTarget) -> [LintingIssue] {
         guard watchApp.target.bundleId.hasPrefix(parentApp.target.bundleId) else {
             return [
                 LintingIssue(reason: """
@@ -212,7 +250,7 @@ public class GraphLinter: GraphLinting {
         return []
     }
 
-    private func lint(watchExtension: ValueGraphTarget, parentWatchApp: ValueGraphTarget) -> [LintingIssue] {
+    private func lint(watchExtension: GraphTarget, parentWatchApp: GraphTarget) -> [LintingIssue] {
         guard watchExtension.target.bundleId.hasPrefix(parentWatchApp.target.bundleId) else {
             return [
                 LintingIssue(reason: """
@@ -223,15 +261,7 @@ public class GraphLinter: GraphLinting {
         return []
     }
 
-    private func products(ofType type: Product, for targetNode: TargetNode, graph: Graph) -> [TargetNode] {
-        graph.targetDependencies(
-            path: targetNode.path,
-            name: targetNode.name
-        )
-        .filter { $0.target.product == type }
-    }
-
-    private func lint(appClip: ValueGraphTarget, parentApp: ValueGraphTarget) -> [LintingIssue] {
+    private func lint(appClip: GraphTarget, parentApp: GraphTarget) -> [LintingIssue] {
         var foundIssues = [LintingIssue]()
 
         if !appClip.target.bundleId.hasPrefix(parentApp.target.bundleId) {
@@ -259,12 +289,15 @@ public class GraphLinter: GraphLinting {
 
     private func lintBundleIdentifiers(graphTraverser: GraphTraversing) -> [LintingIssue] {
         var bundleIds = [BundleIdKey: [String]]()
-        let buildSettingRegex = "\\$[\\({](.*)[\\)}]"
-
         graphTraverser.targets
             .flatMap { $0.value.map(\.value) }
             .forEach { target in
-                if target.bundleId.matches(pattern: buildSettingRegex) {
+                // skip duplicate check for bundle Ids that contain variables
+                // e.g.
+                // - `${MY_BUNDLE_ID}`
+                // - `prefix.${PRODUCT_NAME:rfc1034identifier}`
+                // - `${PRODUCT_NAME:rfc1034identifier}.suffix`
+                if target.bundleId.contains("$") {
                     return
                 }
 
@@ -430,15 +463,22 @@ public class GraphLinter: GraphLinting {
             LintableTarget(platform: .macOS, product: .staticLibrary),
             LintableTarget(platform: .macOS, product: .dynamicLibrary),
             LintableTarget(platform: .macOS, product: .staticFramework),
+            LintableTarget(platform: .macOS, product: .framework),
         ],
-        // tvOS
         LintableTarget(platform: .tvOS, product: .app): [
             LintableTarget(platform: .tvOS, product: .staticLibrary),
             LintableTarget(platform: .tvOS, product: .dynamicLibrary),
             LintableTarget(platform: .tvOS, product: .framework),
             LintableTarget(platform: .tvOS, product: .staticFramework),
             LintableTarget(platform: .tvOS, product: .bundle),
-//            LintableTarget(platform: .tvOS, product: .tvExtension),
+            LintableTarget(platform: .tvOS, product: .tvTopShelfExtension),
+        ],
+        LintableTarget(platform: .tvOS, product: .uiTests): [
+            LintableTarget(platform: .tvOS, product: .app),
+            LintableTarget(platform: .tvOS, product: .staticLibrary),
+            LintableTarget(platform: .tvOS, product: .dynamicLibrary),
+            LintableTarget(platform: .tvOS, product: .framework),
+            LintableTarget(platform: .tvOS, product: .staticFramework),
         ],
         LintableTarget(platform: .tvOS, product: .staticLibrary): [
             LintableTarget(platform: .tvOS, product: .staticLibrary),
@@ -467,11 +507,12 @@ public class GraphLinter: GraphLinting {
             LintableTarget(platform: .tvOS, product: .framework),
             LintableTarget(platform: .tvOS, product: .staticFramework),
         ],
-        //        LintableTarget(platform: .tvOS, product: .tvExtension): [
-//            LintableTarget(platform: .tvOS, product: .staticLibrary),
-//            LintableTarget(platform: .tvOS, product: .dynamicLibrary),
-//            LintableTarget(platform: .tvOS, product: .framework),
-//        ],
+        LintableTarget(platform: .tvOS, product: .tvTopShelfExtension): [
+            LintableTarget(platform: .tvOS, product: .staticLibrary),
+            LintableTarget(platform: .tvOS, product: .dynamicLibrary),
+            LintableTarget(platform: .tvOS, product: .framework),
+            LintableTarget(platform: .tvOS, product: .staticFramework),
+        ],
         // watchOS
 //        LintableTarget(platform: .watchOS, product: .watchApp): [
 //            LintableTarget(platform: .watchOS, product: .staticLibrary),

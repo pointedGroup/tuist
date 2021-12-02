@@ -23,12 +23,52 @@ public final class MockFileHandler: FileHandler {
     // swiftlint:disable:next force_try
     override public var currentPath: AbsolutePath { try! temporaryDirectory() }
 
+    public var stubContentsOfDirectory: ((AbsolutePath) throws -> [AbsolutePath])?
+    override public func contentsOfDirectory(_ path: AbsolutePath) throws -> [AbsolutePath] {
+        guard let stubContentsOfDirectory = stubContentsOfDirectory else {
+            return try super.contentsOfDirectory(path)
+        }
+        return try stubContentsOfDirectory(path)
+    }
+
+    public var stubFilesAndDirectoriesContained: ((AbsolutePath) -> [AbsolutePath]?)?
+    override public func filesAndDirectoriesContained(in path: AbsolutePath) -> [AbsolutePath]? {
+        guard let stubFilesAndDirectoriesContained = stubFilesAndDirectoriesContained else {
+            return super.filesAndDirectoriesContained(in: path)
+        }
+        return stubFilesAndDirectoriesContained(path)
+    }
+
     public var stubExists: ((AbsolutePath) -> Bool)?
     override public func exists(_ path: AbsolutePath) -> Bool {
         guard let stubExists = stubExists else {
             return super.exists(path)
         }
         return stubExists(path)
+    }
+
+    public var stubReadFile: ((AbsolutePath) throws -> Data)?
+    override public func readFile(_ path: AbsolutePath) throws -> Data {
+        guard let stubReadFile = stubReadFile else {
+            return try super.readFile(path)
+        }
+        return try stubReadFile(path)
+    }
+
+    public var stubWrite: ((String, AbsolutePath, Bool) throws -> Void)?
+    override public func write(_ content: String, path: AbsolutePath, atomically: Bool) throws {
+        guard let stubWrite = stubWrite else {
+            return try super.write(content, path: path, atomically: atomically)
+        }
+        return try stubWrite(content, path, atomically)
+    }
+
+    public var stubIsFolder: ((AbsolutePath) -> Bool)?
+    override public func isFolder(_ path: AbsolutePath) -> Bool {
+        guard let stubIsFolder = stubIsFolder else {
+            return super.isFolder(path)
+        }
+        return stubIsFolder(path)
     }
 
     override public func inTemporaryDirectory<Result>(removeOnCompletion _: Bool, _ closure: (AbsolutePath) throws -> Result) throws -> Result {
@@ -58,8 +98,8 @@ open class TuistTestCase: XCTestCase {
         }
     }
 
-    public var fileHandler: MockFileHandler!
     public var environment: MockEnvironment!
+    public var fileHandler: MockFileHandler!
 
     override open func setUp() {
         super.setUp()
@@ -90,13 +130,16 @@ open class TuistTestCase: XCTestCase {
     }
 
     @discardableResult
-    public func createFiles(_ files: [String]) throws -> [AbsolutePath] {
+    public func createFiles(_ files: [String], content: String? = nil) throws -> [AbsolutePath] {
         let temporaryPath = try self.temporaryPath()
         let fileHandler = FileHandler()
         let paths = files.map { temporaryPath.appending(RelativePath($0)) }
 
         try paths.forEach {
             try fileHandler.touch($0)
+            if let content = content {
+                try fileHandler.write(content, path: $0, atomically: true)
+            }
         }
         return paths
     }
@@ -160,6 +203,38 @@ open class TuistTestCase: XCTestCase {
         """
 
         XCTAssertFalse(output.contains(notExpected), message, file: file, line: line)
+    }
+
+    /// Asserts that a directory at given path contains expected elements.
+    /// It does not check the contents of a directory recursively.
+    /// - Throws: An error if the directory at given path does not exist.
+    public func XCTAssertDirectoryContentEqual(
+        _ directory: AbsolutePath,
+        _ expected: [String],
+        file: StaticString = #file,
+        line: UInt = #line
+    ) throws {
+        let directoryContent = try fileHandler
+            .contentsOfDirectory(directory)
+            .map { $0.pathString }
+            .sorted()
+
+        let expectedContent = expected
+            .map { directory.appending(RelativePath($0)) }
+            .map { $0.pathString }
+            .sorted()
+
+        let message = """
+        The directory content:
+        ===========
+        \(directoryContent.isEmpty ? "<Empty>" : directoryContent.joined(separator: "\n"))
+
+        Doesn't equal to expected:
+        ===========
+        \(expectedContent.isEmpty ? "<Empty>" : expectedContent.joined(separator: "\n"))
+        """
+
+        XCTAssertEqual(directoryContent, expectedContent, message, file: file, line: line)
     }
 
     public func temporaryFixture(_ pathString: String) throws -> AbsolutePath {

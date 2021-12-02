@@ -19,9 +19,9 @@ final class ResourcesProjectMapperTests: TuistUnitTestCase {
     }
 
     override func tearDown() {
-        super.tearDown()
         project = nil
         subject = nil
+        super.tearDown()
     }
 
     func test_map_when_a_target_that_has_resources_and_doesnt_supports_them() throws {
@@ -65,6 +65,7 @@ final class ResourcesProjectMapperTests: TuistUnitTestCase {
         XCTAssertEqual(resourcesTarget.product, .bundle)
         XCTAssertEqual(resourcesTarget.platform, target.platform)
         XCTAssertEqual(resourcesTarget.bundleId, "\(target.bundleId).resources")
+        XCTAssertEqual(resourcesTarget.deploymentTarget, target.deploymentTarget)
         XCTAssertEqual(resourcesTarget.filesGroup, target.filesGroup)
         XCTAssertEqual(resourcesTarget.resources, resources)
     }
@@ -111,6 +112,7 @@ final class ResourcesProjectMapperTests: TuistUnitTestCase {
         XCTAssertEqual(resourcesTarget.product, .bundle)
         XCTAssertEqual(resourcesTarget.platform, target.platform)
         XCTAssertEqual(resourcesTarget.bundleId, "\(target.bundleId).resources")
+        XCTAssertEqual(resourcesTarget.deploymentTarget, target.deploymentTarget)
         XCTAssertEqual(resourcesTarget.filesGroup, target.filesGroup)
         XCTAssertEqual(resourcesTarget.coreDataModels, coreDataModels)
     }

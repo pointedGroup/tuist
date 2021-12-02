@@ -18,23 +18,11 @@ public protocol Environmenting: AnyObject {
     /// Only to be used for acceptance tests
     var automationPath: AbsolutePath? { get }
 
-    /// Returns the cache directory
-    var cacheDirectory: AbsolutePath { get }
-
-    /// Returns the directory where the project description helper modules are cached.
-    var projectDescriptionHelpersCacheDirectory: AbsolutePath { get }
-
-    /// Directory where the projects generated for automation are located.
-    var projectsCacheDirectory: AbsolutePath { get }
-
-    /// Returns the directory where the build artifacts are cached.
-    var buildCacheDirectory: AbsolutePath { get }
-
-    /// Returns the directory where hashes of modules that have been a part of successful test are cached
-    var testsCacheDirectory: AbsolutePath { get }
-
     /// Returns all the environment variables that are specific to Tuist (prefixed with TUIST_)
     var tuistVariables: [String: String] { get }
+
+    /// Returns all the environment variables that are specific to Tuist configuration (prefixed with TUIST_CONFIG_)
+    var tuistConfigVariables: [String: String] { get }
 
     /// Returns all the environment variables that can be included during the manifest loading process
     var manifestLoadingVariables: [String: String] { get }
@@ -87,7 +75,7 @@ public class Environment: Environmenting {
 
     /// Sets up the local environment.
     private func setup() {
-        [directory, versionsDirectory, cacheDirectory].forEach {
+        [directory, versionsDirectory].forEach {
             if !fileHandler.exists($0) {
                 // swiftlint:disable:next force_try
                 try! fileHandler.createFolder($0)
@@ -97,7 +85,11 @@ public class Environment: Environmenting {
 
     /// Returns true if the output of Tuist should be coloured.
     public var shouldOutputBeColoured: Bool {
-        isStandardOutputInteractive || isColouredOutputEnvironmentTrue
+        if let coloredOutput = ProcessInfo.processInfo.environment[Constants.EnvironmentVariables.colouredOutput] {
+            return Constants.trueValues.contains(coloredOutput)
+        } else {
+            return isStandardOutputInteractive
+        }
     }
 
     /// Returns true if the standard output is interactive.
@@ -129,35 +121,8 @@ public class Environment: Environmenting {
         }
     }
 
-    public var testsCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "TestsCache")
-    }
-
-    /// Returns the directory where the build artifacts are cached.
-    public var buildCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "BuildCache")
-    }
-
-    /// Returns the directory where the project description helper modules are cached.
-    public var projectDescriptionHelpersCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "ProjectDescriptionHelpers")
-    }
-
-    public var projectsCacheDirectory: AbsolutePath {
-        cacheDirectory.appending(component: "Projects")
-    }
-
     public var automationPath: AbsolutePath? {
         ProcessInfo.processInfo.environment[Constants.EnvironmentVariables.automationPath].map { AbsolutePath($0) }
-    }
-
-    /// Returns the cache directory
-    public var cacheDirectory: AbsolutePath {
-        if let envVariable = ProcessInfo.processInfo.environment[Constants.EnvironmentVariables.cacheDirectory] {
-            return AbsolutePath(envVariable)
-        } else {
-            return directory.appending(component: "Cache")
-        }
     }
 
     public var queueDirectory: AbsolutePath {
@@ -170,7 +135,12 @@ public class Environment: Environmenting {
 
     /// Returns all the environment variables that are specific to Tuist (prefixed with TUIST_)
     public var tuistVariables: [String: String] {
-        ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("TUIST_") }
+        ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("TUIST_") }.filter { !$0.key.hasPrefix("TUIST_CONFIG_") }
+    }
+
+    /// Returns all the environment variables that are specific to Tuist config (prefixed with TUIST_CONFIG_)
+    public var tuistConfigVariables: [String: String] {
+        ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("TUIST_CONFIG_") }
     }
 
     public var manifestLoadingVariables: [String: String] {
@@ -186,16 +156,5 @@ public class Environment: Environmenting {
     /// Settings path.
     public var settingsPath: AbsolutePath {
         directory.appending(component: "settings.json")
-    }
-
-    // MARK: - Fileprivate
-
-    /// Return true if the the coloured output is forced through an environment variable.
-    fileprivate var isColouredOutputEnvironmentTrue: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        return !environment
-            .filter { $0.key == Constants.EnvironmentVariables.colouredOutput }
-            .filter { Constants.trueValues.contains($0.value) }
-            .isEmpty
     }
 }

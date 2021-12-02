@@ -2,34 +2,10 @@ import Foundation
 import RxBlocking
 import RxSwift
 import TSCBasic
+import struct TSCUtility.Version
 import TuistCore
 import TuistGraph
 import TuistSupport
-
-public enum CacheFrameworkBuilderError: FatalError {
-    case builtProductsDirectoryNotFound(targetName: String)
-    case frameworkNotFound(name: String, derivedDataPath: AbsolutePath)
-    case deviceNotFound(platform: String)
-
-    public var description: String {
-        switch self {
-        case let .builtProductsDirectoryNotFound(targetName):
-            return "Couldn't find the built products directory for target '\(targetName)'."
-        case let .frameworkNotFound(name, derivedDataPath):
-            return "Couldn't find framework '\(name)' in the derived data directory: \(derivedDataPath.pathString)"
-        case let .deviceNotFound(platform):
-            return "Couldn't find an available device for platform: '\(platform)'"
-        }
-    }
-
-    public var type: ErrorType {
-        switch self {
-        case .builtProductsDirectoryNotFound: return .bug
-        case .frameworkNotFound: return .bug
-        case .deviceNotFound: return .bug
-        }
-    }
-}
 
 public final class CacheFrameworkBuilder: CacheArtifactBuilding {
     // MARK: - Attributes
@@ -43,9 +19,8 @@ public final class CacheFrameworkBuilder: CacheArtifactBuilding {
     /// Developer's environment.
     private let developerEnvironment: DeveloperEnvironmenting
 
-    /// a map between the path of a project or workspace, and the path to derived data
-    /// using the hash calculated by Xcode.
-    private var projectPathHashes: [String: AbsolutePath] = [:]
+    /// Locator for getting Xcode build directory.
+    private let xcodeProjectBuildDirectoryLocator: XcodeProjectBuildDirectoryLocating
 
     // MARK: - Init
 
@@ -54,13 +29,17 @@ public final class CacheFrameworkBuilder: CacheArtifactBuilding {
     ///   - xcodeBuildController: Xcode build controller.
     ///   - simulatorController: Simulator controller.
     ///   - developerEnvironment: Developer environment.
-    public init(xcodeBuildController: XcodeBuildControlling,
-                simulatorController: SimulatorControlling = SimulatorController(),
-                developerEnvironment: DeveloperEnvironmenting = DeveloperEnvironment.shared)
-    {
+    ///   - xcodeProjectBuildDirectoryLocator: Locator for Xcode builds.
+    public init(
+        xcodeBuildController: XcodeBuildControlling,
+        simulatorController: SimulatorControlling = SimulatorController(),
+        developerEnvironment: DeveloperEnvironmenting = DeveloperEnvironment.shared,
+        xcodeProjectBuildDirectoryLocator: XcodeProjectBuildDirectoryLocating = XcodeProjectBuildDirectoryLocator()
+    ) {
         self.xcodeBuildController = xcodeBuildController
         self.simulatorController = simulatorController
         self.developerEnvironment = developerEnvironment
+        self.xcodeProjectBuildDirectoryLocator = xcodeProjectBuildDirectoryLocator
     }
 
     // MARK: - ArtifactBuilding
@@ -68,111 +47,52 @@ public final class CacheFrameworkBuilder: CacheArtifactBuilding {
     /// Returns the type of artifact that the concrete builder processes
     public var cacheOutputType: CacheOutputType = .framework
 
-    public func build(workspacePath: AbsolutePath,
-                      target: Target,
-                      configuration: String,
-                      into outputDirectory: AbsolutePath) throws
-    {
-        try build(
-            .workspace(workspacePath),
-            target: target,
-            configuration: configuration,
-            into: outputDirectory
-        )
-    }
+    public func build(
+        scheme: Scheme,
+        projectTarget: XcodeBuildTarget,
+        configuration: String,
+        osVersion: Version?,
+        deviceName: String?,
+        into outputDirectory: AbsolutePath
+    ) throws {
+        let platform = self.platform(scheme: scheme)
 
-    public func build(projectPath: AbsolutePath,
-                      target: Target,
-                      configuration: String,
-                      into outputDirectory: AbsolutePath) throws
-    {
-        try build(
-            .project(projectPath),
-            target: target,
+        let arguments = try self.arguments(
+            platform: platform,
             configuration: configuration,
+            version: osVersion,
+            deviceName: deviceName
+        )
+
+        try xcodebuild(
+            projectTarget: projectTarget,
+            scheme: scheme.name,
+            arguments: arguments
+        )
+
+        let buildDirectory = try xcodeProjectBuildDirectoryLocator.locate(
+            platform: platform,
+            projectPath: projectTarget.path,
+            configuration: configuration
+        )
+
+        try exportFrameworksAndDSYMs(
+            from: buildDirectory,
             into: outputDirectory
         )
     }
 
     // MARK: - Fileprivate
 
-    fileprivate func build(_ projectTarget: XcodeBuildTarget,
-                           target: Target,
-                           configuration: String,
-                           into outputDirectory: AbsolutePath) throws
+    fileprivate func arguments(platform: Platform,
+                               configuration: String,
+                               version: Version?,
+                               deviceName: String?) throws -> [XcodeBuildArgument]
     {
-        guard target.product.isFramework else {
-            throw CacheBinaryBuilderError.nonFrameworkTargetForFramework(target.name)
-        }
-        let scheme = target.name.spm_shellEscaped()
-
-        logger.notice("Building .framework for \(target.name)...", metadata: .section)
-
-        let sdk = self.sdk(target: target)
-
-        let arguments = try self.arguments(
-            target: target,
-            sdk: sdk,
-            configuration: configuration
-        )
-
-        try xcodebuild(
-            projectTarget: projectTarget,
-            scheme: scheme,
-            target: target,
-            arguments: arguments
-        )
-
-        let buildDirectory = try self.buildDirectory(
-            for: projectTarget,
-            target: target,
-            configuration: configuration,
-            sdk: sdk
-        )
-
-        try exportFrameworksAndDSYMs(
-            from: buildDirectory,
-            into: outputDirectory,
-            target: target
-        )
-    }
-
-    fileprivate func buildDirectory(for projectTarget: XcodeBuildTarget,
-                                    target: Target,
-                                    configuration: String,
-                                    sdk: String) throws -> AbsolutePath
-    {
-        let projectPath = projectTarget.path
-        let pathString = projectPath.pathString
-
-        if let existing = projectPathHashes[pathString] {
-            return existing
-        }
-
-        let derivedDataPath = developerEnvironment.derivedDataDirectory
-        let hash = try XcodeProjectPathHasher.hashString(for: pathString)
-        var buildDirectory = derivedDataPath
-            .appending(component: "\(projectTarget.path.basenameWithoutExt)-\(hash)")
-            .appending(component: "Build")
-            .appending(component: "Products")
-        if target.platform == .macOS {
-            buildDirectory = buildDirectory.appending(component: "\(configuration)")
-        } else {
-            buildDirectory = buildDirectory.appending(component: "\(configuration)-\(sdk)")
-        }
-        projectPathHashes[pathString] = buildDirectory
-
-        return buildDirectory
-    }
-
-    fileprivate func arguments(target: Target,
-                               sdk: String,
-                               configuration: String) throws -> [XcodeBuildArgument]
-    {
-        try destination(target: target)
+        return try destination(platform: platform, version: version, deviceName: deviceName)
             .map { (destination: String) -> [XcodeBuildArgument] in
                 [
-                    .sdk(sdk),
+                    .sdk(platform == .macOS ? platform.xcodeDeviceSDK : platform.xcodeSimulatorSDK!),
                     .configuration(configuration),
                     .xcarg("DEBUG_INFORMATION_FORMAT", "dwarf-with-dsym"),
                     .xcarg("GCC_GENERATE_DEBUGGING_SYMBOLS", "YES"),
@@ -185,32 +105,23 @@ public final class CacheFrameworkBuilder: CacheArtifactBuilding {
 
     /// https://www.mokacoding.com/blog/xcodebuild-destination-options/
     /// https://www.mokacoding.com/blog/how-to-always-run-latest-simulator-cli/
-    fileprivate func destination(target: Target) -> Single<String> {
-        var platform: Platform!
-        switch target.platform {
-        case .iOS: platform = .iOS
-        case .watchOS: platform = .watchOS
-        case .tvOS: platform = .tvOS
+    fileprivate func destination(platform: Platform, version: Version?, deviceName: String?) -> Single<String> {
+        var mappedPlatform: Platform!
+        switch platform {
+        case .iOS: mappedPlatform = .iOS
+        case .watchOS: mappedPlatform = .watchOS
+        case .tvOS: mappedPlatform = .tvOS
         case .macOS: return .just("platform=OS X,arch=x86_64")
         }
 
-        return simulatorController.findAvailableDevice(platform: platform)
+        return simulatorController.findAvailableDevice(platform: mappedPlatform, version: version, minVersion: nil, deviceName: deviceName)
             .flatMap { (deviceAndRuntime) -> Single<String> in
                 .just("id=\(deviceAndRuntime.device.udid)")
             }
     }
 
-    fileprivate func sdk(target: Target) -> String {
-        if target.platform == .macOS {
-            return target.platform.xcodeDeviceSDK
-        } else {
-            return target.platform.xcodeSimulatorSDK!
-        }
-    }
-
     fileprivate func xcodebuild(projectTarget: XcodeBuildTarget,
                                 scheme: String,
-                                target: Target,
                                 arguments: [XcodeBuildArgument]) throws
     {
         _ = try xcodeBuildController.build(
@@ -220,30 +131,22 @@ public final class CacheFrameworkBuilder: CacheArtifactBuilding {
             arguments: arguments
         )
         .printFormattedOutput()
-        .do(onSubscribed: {
-            logger.notice("Building \(target.name) as .framework...", metadata: .subsection)
-        })
         .ignoreElements()
         .toBlocking()
         .last()
     }
 
     fileprivate func exportFrameworksAndDSYMs(from buildDirectory: AbsolutePath,
-                                              into outputDirectory: AbsolutePath,
-                                              target: Target) throws
+                                              into outputDirectory: AbsolutePath) throws
     {
-        logger.info("Exporting built \(target.name) framework and dsym...")
-
-        guard let framework = FileHandler.shared.glob(buildDirectory, glob: target.productNameWithExtension).first else {
-            let derivedDataPath = developerEnvironment.derivedDataDirectory
-            throw CacheFrameworkBuilderError.frameworkNotFound(name: target.productNameWithExtension, derivedDataPath: derivedDataPath)
+        let frameworks = FileHandler.shared.glob(buildDirectory, glob: "*.framework")
+        try frameworks.forEach { framework in
+            try FileHandler.shared.copy(from: framework, to: outputDirectory.appending(component: framework.basename))
         }
-        let dsyms = FileHandler.shared.glob(buildDirectory, glob: "\(target.productNameWithExtension).dSYM")
-        try FileHandler.shared.copy(from: framework, to: outputDirectory.appending(component: framework.basename))
+
+        let dsyms = FileHandler.shared.glob(buildDirectory, glob: "*.dSYM")
         try dsyms.forEach { dsym in
             try FileHandler.shared.copy(from: dsym, to: outputDirectory.appending(component: dsym.basename))
         }
-
-        logger.info("Done exporting from \(target.name) into Tuist cache")
     }
 }

@@ -24,7 +24,12 @@ extension TuistGraph.Target {
     /// - Parameters:
     ///   - manifest: Manifest representation of  the target.
     ///   - generatorPaths: Generator paths.
-    static func from(manifest: ProjectDescription.Target, generatorPaths: GeneratorPaths) throws -> TuistGraph.Target {
+    ///   - externalDependencies: External dependencies graph.
+    static func from(
+        manifest: ProjectDescription.Target,
+        generatorPaths: GeneratorPaths,
+        externalDependencies: [String: [TuistGraph.TargetDependency]]
+    ) throws -> TuistGraph.Target {
         let name = manifest.name
         let platform = try TuistGraph.Platform.from(manifest: manifest.platform)
         let product = TuistGraph.Product.from(manifest: manifest.product)
@@ -33,7 +38,9 @@ extension TuistGraph.Target {
         let productName = manifest.productName
         let deploymentTarget = manifest.deploymentTarget.map { TuistGraph.DeploymentTarget.from(manifest: $0) }
 
-        let dependencies = try manifest.dependencies.map { try TuistGraph.TargetDependency.from(manifest: $0, generatorPaths: generatorPaths) }
+        let dependencies = try manifest.dependencies.flatMap {
+            try TuistGraph.TargetDependency.from(manifest: $0, generatorPaths: generatorPaths, externalDependencies: externalDependencies)
+        }
 
         let infoPlist = try TuistGraph.InfoPlist.from(manifest: manifest.infoPlist, generatorPaths: generatorPaths)
         let entitlements = try manifest.entitlements.map { try generatorPaths.resolve(path: $0) }
@@ -59,14 +66,16 @@ extension TuistGraph.Target {
             try TuistGraph.CoreDataModel.from(manifest: $0, generatorPaths: generatorPaths)
         }
 
-        let actions = try manifest.actions.map {
-            try TuistGraph.TargetAction.from(manifest: $0, generatorPaths: generatorPaths)
+        let scripts = try manifest.scripts.map {
+            try TuistGraph.TargetScript.from(manifest: $0, generatorPaths: generatorPaths)
         }
 
         let environment = manifest.environment
         let launchArguments = manifest.launchArguments.map(LaunchArgument.from)
 
         let playgrounds = sourcesPlaygrounds + resourcesPlaygrounds
+
+        let additionalFiles = try manifest.additionalFiles.flatMap { try TuistGraph.FileElement.from(manifest: $0, generatorPaths: generatorPaths) }
 
         return TuistGraph.Target(
             name: name,
@@ -83,21 +92,24 @@ extension TuistGraph.Target {
             copyFiles: copyFiles,
             headers: headers,
             coreDataModels: coreDataModels,
-            actions: actions,
+            scripts: scripts,
             environment: environment,
             launchArguments: launchArguments,
             filesGroup: .group(name: "Project"),
             dependencies: dependencies,
-            playgrounds: playgrounds
+            playgrounds: playgrounds,
+            additionalFiles: additionalFiles
         )
     }
 
     // MARK: - Fileprivate
 
+    // swiftlint:disable large_tuple
     // swiftlint:disable line_length
     fileprivate static func resourcesAndPlaygrounds(manifest: ProjectDescription.Target,
                                                     generatorPaths: GeneratorPaths) throws -> (resources: [TuistGraph.ResourceFileElement], playgrounds: [AbsolutePath], invalidResourceGlobs: [InvalidGlob])
     {
+        // swiftlint:enable large_tuple
         // swiftlint:enable line_length
         let resourceFilter = { (path: AbsolutePath) -> Bool in
             TuistGraph.Target.isResource(path: path)
@@ -119,6 +131,7 @@ extension TuistGraph.Target {
                 return []
             }
         }
+
         allResources.forEach { fileElement in
             switch fileElement {
             case .folderReference: resourcesWithoutPlaygrounds.append(fileElement)
@@ -155,10 +168,11 @@ extension TuistGraph.Target {
         var playgrounds: Set<AbsolutePath> = []
 
         // Sources
-        let allSources = try TuistGraph.Target.sources(targetName: targetName, sources: manifest.sources?.globs.map { (glob: ProjectDescription.SourceFileGlob) in
+        let allSources = try TuistGraph.Target.sources(targetName: targetName, sources: manifest.sources?.globs.map { glob in
             let globPath = try generatorPaths.resolve(path: glob.glob).pathString
             let excluding: [String] = try glob.excluding.compactMap { try generatorPaths.resolve(path: $0).pathString }
-            return TuistGraph.SourceFileGlob(glob: globPath, excluding: excluding, compilerFlags: glob.compilerFlags)
+            let mappedCodeGen = glob.codeGen.map(TuistGraph.FileCodeGen.from)
+            return TuistGraph.SourceFileGlob(glob: globPath, excluding: excluding, compilerFlags: glob.compilerFlags, codeGen: mappedCodeGen)
         } ?? [])
 
         allSources.forEach { sourceFile in

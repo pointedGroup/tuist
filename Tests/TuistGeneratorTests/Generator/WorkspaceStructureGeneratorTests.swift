@@ -342,6 +342,10 @@ final class WorkspaceStructureGeneratorTests: XCTestCase {
             try JSONDecoder().decode(T.self, from: Data())
         }
 
+        func determineTemporaryDirectory() throws -> AbsolutePath {
+            currentPath
+        }
+
         func inTemporaryDirectory(_: (AbsolutePath) throws -> Void) throws {}
         func inTemporaryDirectory(removeOnCompletion _: Bool, _: (AbsolutePath) throws -> Void) throws {}
         func inTemporaryDirectory<Result>(_ closure: (AbsolutePath) throws -> Result) throws -> Result {
@@ -362,6 +366,10 @@ final class WorkspaceStructureGeneratorTests: XCTestCase {
 
         func resolveSymlinks(_ path: AbsolutePath) -> AbsolutePath {
             path
+        }
+
+        func fileAttributes(at _: AbsolutePath) throws -> [FileAttributeKey: Any] {
+            [:]
         }
 
         func write(_: String, path _: AbsolutePath, atomically _: Bool) throws {
@@ -404,6 +412,10 @@ final class WorkspaceStructureGeneratorTests: XCTestCase {
 
         func contentsOfDirectory(_: AbsolutePath) throws -> [AbsolutePath] {
             []
+        }
+
+        func filesAndDirectoriesContained(in _: AbsolutePath) -> [AbsolutePath]? {
+            nil
         }
 
         func ls(_: AbsolutePath) throws -> [AbsolutePath] {

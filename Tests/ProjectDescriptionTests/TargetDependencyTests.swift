@@ -39,14 +39,6 @@ final class TargetDependencyTests: XCTestCase {
         XCTAssertEqual(decoded, sdks)
     }
 
-    func test_cocoapods_codable() throws {
-        // Given
-        let subject = TargetDependency.cocoapods(path: "./path")
-
-        // Then
-        XCTAssertCodable(subject)
-    }
-
     func test_package_codable() throws {
         // Given
         let subject = TargetDependency.package(product: "foo")
@@ -57,7 +49,9 @@ final class TargetDependencyTests: XCTestCase {
 
     func test_xcframework_codable() {
         // Given
-        let subject = TargetDependency.xcFramework(path: "/path/framework.xcframework")
+        let subject: [TargetDependency] = [
+            .xcframework(path: "/path/framework.xcframework"),
+        ]
 
         // Then
         XCTAssertCodable(subject)

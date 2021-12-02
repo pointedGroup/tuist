@@ -1,11 +1,12 @@
 import Foundation
 import TSCBasic
 
-public struct Scheme: Equatable {
+public struct Scheme: Equatable, Codable {
     // MARK: - Attributes
 
     public var name: String
     public var shared: Bool
+    public var hidden: Bool
     public var buildAction: BuildAction?
     public var testAction: TestAction?
     public var runAction: RunAction?
@@ -17,6 +18,7 @@ public struct Scheme: Equatable {
 
     public init(name: String,
                 shared: Bool = false,
+                hidden: Bool = false,
                 buildAction: BuildAction? = nil,
                 testAction: TestAction? = nil,
                 runAction: RunAction? = nil,
@@ -26,6 +28,7 @@ public struct Scheme: Equatable {
     {
         self.name = name
         self.shared = shared
+        self.hidden = hidden
         self.buildAction = buildAction
         self.testAction = testAction
         self.runAction = runAction

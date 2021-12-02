@@ -32,9 +32,7 @@ enum CloudLogoutServiceError: FatalError, Equatable {
 }
 
 final class CloudLogoutService: CloudLogoutServicing {
-    /// Cloud session controller.
     let cloudSessionController: CloudSessionControlling
-
     let configLoader: ConfigLoading
 
     // MARK: - Init

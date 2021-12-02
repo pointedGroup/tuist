@@ -1,6 +1,7 @@
 import Foundation
 import RxSwift
 import TSCBasic
+import struct TSCUtility.Version
 import TuistCache
 import TuistCore
 import TuistGraph
@@ -19,34 +20,25 @@ public final class MockCacheArtifactBuilder: CacheArtifactBuilding {
         return stubbedCacheOutputType
     }
 
-    public var invokedBuildWorkspacePath = false
-    public var invokedBuildWorkspacePathCount = 0
-    public var invokedBuildWorkspacePathParameters: (workspacePath: AbsolutePath, target: Target, outputDirectory: AbsolutePath)?
-    public var invokedBuildWorkspacePathParametersList = [(workspacePath: AbsolutePath, target: Target, outputDirectory: AbsolutePath)]()
-    public var stubbedBuildWorkspacePathError: Error?
-
-    public func build(workspacePath: AbsolutePath, target: Target, configuration _: String, into outputDirectory: AbsolutePath) throws {
-        invokedBuildWorkspacePath = true
-        invokedBuildWorkspacePathCount += 1
-        invokedBuildWorkspacePathParameters = (workspacePath, target, outputDirectory)
-        invokedBuildWorkspacePathParametersList.append((workspacePath, target, outputDirectory))
-        if let error = stubbedBuildWorkspacePathError {
-            throw error
-        }
-    }
-
-    public var invokedBuildProjectPath = false
-    public var invokedBuildProjectPathCount = 0
-    public var invokedBuildProjectPathParameters: (projectPath: AbsolutePath, target: Target, outputDirectory: AbsolutePath)?
-    public var invokedBuildProjectPathParametersList = [(projectPath: AbsolutePath, target: Target, outputDirectory: AbsolutePath)]()
-    public var stubbedBuildProjectPathError: Error?
-
-    public func build(projectPath: AbsolutePath, target: Target, configuration _: String, into outputDirectory: AbsolutePath) throws {
-        invokedBuildProjectPath = true
-        invokedBuildProjectPathCount += 1
-        invokedBuildProjectPathParameters = (projectPath, target, outputDirectory)
-        invokedBuildProjectPathParametersList.append((projectPath, target, outputDirectory))
-        if let error = stubbedBuildProjectPathError {
+    public var invokedBuildSchemeProject = false
+    public var invokedBuildSchemeProjectCount = 0
+    // swiftlint:disable:next large_tuple
+    public var invokedBuildSchemeProjectParameters: (scheme: Scheme, projectTarget: XcodeBuildTarget, outputDirectory: AbsolutePath)?
+    public var invokedBuildchemeProjectParametersList = [(scheme: Scheme, projectTarget: XcodeBuildTarget, outputDirectory: AbsolutePath)]()
+    public var stubbedBuildSchemeProjectError: Error?
+    public func build(
+        scheme: Scheme,
+        projectTarget: XcodeBuildTarget,
+        configuration _: String,
+        osVersion _: Version?,
+        deviceName _: String?,
+        into outputDirectory: AbsolutePath
+    ) throws {
+        invokedBuildSchemeProject = true
+        invokedBuildSchemeProjectCount += 1
+        invokedBuildSchemeProjectParameters = (scheme, projectTarget, outputDirectory)
+        invokedBuildchemeProjectParametersList.append((scheme, projectTarget, outputDirectory))
+        if let error = stubbedBuildSchemeProjectError {
             throw error
         }
     }

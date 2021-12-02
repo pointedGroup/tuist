@@ -13,6 +13,7 @@ import XCTest
 final class CachePrintHashesServiceTests: TuistUnitTestCase {
     var subject: CachePrintHashesService!
     var generator: MockGenerator!
+    var generatorFactory: MockGeneratorFactory!
     var cacheGraphContentHasher: MockCacheGraphContentHasher!
     var clock: Clock!
     var path: AbsolutePath!
@@ -21,7 +22,9 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
     override func setUp() {
         super.setUp()
         path = AbsolutePath("/Test")
+        generatorFactory = MockGeneratorFactory()
         generator = MockGenerator()
+        generatorFactory.stubbedDefaultResult = generator
 
         cacheGraphContentHasher = MockCacheGraphContentHasher()
         clock = StubClock()
@@ -32,7 +35,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
         }
 
         subject = CachePrintHashesService(
-            generator: generator,
+            generatorFactory: generatorFactory,
             cacheGraphContentHasher: cacheGraphContentHasher,
             clock: clock,
             configLoader: configLoader
@@ -41,6 +44,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
 
     override func tearDown() {
         generator = nil
+        generatorFactory = nil
         cacheGraphContentHasher = nil
         clock = nil
         subject = nil
@@ -50,7 +54,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
     func test_run_loads_the_graph() throws {
         // Given
         subject = CachePrintHashesService(
-            generator: generator,
+            generatorFactory: generatorFactory,
             cacheGraphContentHasher: cacheGraphContentHasher,
             clock: clock,
             configLoader: configLoader
@@ -66,7 +70,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
     func test_run_content_hasher_gets_correct_graph() throws {
         // Given
         subject = CachePrintHashesService(
-            generator: generator,
+            generatorFactory: generatorFactory,
             cacheGraphContentHasher: cacheGraphContentHasher,
             clock: clock,
             configLoader: configLoader
@@ -75,7 +79,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
         generator.loadStub = { _ in graph }
 
         var invokedGraph: Graph?
-        cacheGraphContentHasher.contentHashesStub = { graph, _, _ in
+        cacheGraphContentHasher.contentHashesStub = { graph, _, _, _ in
             invokedGraph = graph
             return [:]
         }
@@ -89,14 +93,14 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
 
     func test_run_outputs_correct_hashes() throws {
         // Given
-        let target1 = TargetNode.test(target: .test(name: "ShakiOne"))
-        let target2 = TargetNode.test(target: .test(name: "ShakiTwo"))
-        cacheGraphContentHasher.contentHashesStub = { _, _, _ in
+        let target1 = GraphTarget.test(target: .test(name: "ShakiOne"))
+        let target2 = GraphTarget.test(target: .test(name: "ShakiTwo"))
+        cacheGraphContentHasher.contentHashesStub = { _, _, _, _ in
             [target1: "hash1", target2: "hash2"]
         }
 
         subject = CachePrintHashesService(
-            generator: generator,
+            generatorFactory: generatorFactory,
             cacheGraphContentHasher: cacheGraphContentHasher,
             clock: clock,
             configLoader: configLoader
@@ -113,7 +117,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
     func test_run_gives_correct_artifact_type_to_hasher() throws {
         // Given
         var xcframeworkOutputType: CacheOutputType?
-        cacheGraphContentHasher.contentHashesStub = { _, _, cacheOutputType in
+        cacheGraphContentHasher.contentHashesStub = { _, _, cacheOutputType, _ in
             xcframeworkOutputType = cacheOutputType
             return [:]
         }
@@ -126,7 +130,7 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
 
         // Given
         var frameworkOutputType: CacheOutputType?
-        cacheGraphContentHasher.contentHashesStub = { _, _, cacheOutputType in
+        cacheGraphContentHasher.contentHashesStub = { _, _, cacheOutputType, _ in
             frameworkOutputType = cacheOutputType
             return [:]
         }
@@ -140,13 +144,18 @@ final class CachePrintHashesServiceTests: TuistUnitTestCase {
 
     func test_run_gives_correct_cache_profile_type_to_hasher() throws {
         // Given
-        let profile: Cache.Profile = .test(name: "Simulator", configuration: "Debug")
+        let profile: Cache.Profile = .test(
+            name: "Simulator",
+            configuration: "Debug",
+            device: "iPhone 12",
+            os: "15.0.0"
+        )
         configLoader.loadConfigStub = { _ in
             Config.test(cache: .test(profiles: [profile]))
         }
 
         var invokedCacheProfile: TuistGraph.Cache.Profile?
-        cacheGraphContentHasher.contentHashesStub = { _, cacheProfile, _ in
+        cacheGraphContentHasher.contentHashesStub = { _, cacheProfile, _, _ in
             invokedCacheProfile = cacheProfile
             return [:]
         }

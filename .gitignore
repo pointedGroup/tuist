@@ -94,3 +94,7 @@ generated_fixtures
 .fixtures.generated.json
 **/Derived/
 Tuist.xcworkspace
+node_modules
+
+Tuist/Dependencies/SwiftPackageManager
+Tuist/Dependencies/graph.json

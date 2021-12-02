@@ -1,15 +1,37 @@
 import Foundation
+import SwiftGenKit
 import TSCBasic
 import TuistCore
 import TuistGraph
 import TuistSupport
 
-/// A project mapper that synthezies resource interfaces
-public final class SynthesizedResourceInterfaceProjectMapper: ProjectMapping {
+// swiftlint:disable:next type_name
+enum SynthesizedResourceInterfaceProjectMapperError: FatalError, Equatable {
+    case defaultTemplateNotAvailable(ResourceSynthesizer.Parser)
+
+    var type: ErrorType {
+        switch self {
+        case .defaultTemplateNotAvailable:
+            return .bug
+        }
+    }
+
+    var description: String {
+        switch self {
+        case let .defaultTemplateNotAvailable(parser):
+            return "Default template for parser \(parser) not available."
+        }
+    }
+}
+
+/// A project mapper that synthesizes resource interfaces
+public final class SynthesizedResourceInterfaceProjectMapper: ProjectMapping { // swiftlint:disable:this type_name
     private let synthesizedResourceInterfacesGenerator: SynthesizedResourceInterfacesGenerating
     private let contentHasher: ContentHashing
 
-    public convenience init(contentHasher: ContentHashing) {
+    public convenience init(
+        contentHasher: ContentHashing
+    ) {
         self.init(
             synthesizedResourceInterfacesGenerator: SynthesizedResourceInterfacesGenerator(),
             contentHasher: contentHasher
@@ -47,46 +69,35 @@ public final class SynthesizedResourceInterfaceProjectMapper: ProjectMapping {
 
         var target = target
 
-        var sideEffects: [SideEffectDescriptor] = []
-
-        let assetsSideEffects: [SideEffectDescriptor]
-        (target, assetsSideEffects) = try renderAndMapTarget(
-            .assets,
-            target: target,
-            project: project
-        )
-        sideEffects += assetsSideEffects
-
-        let stringsSideEffects: [SideEffectDescriptor]
-        (target, stringsSideEffects) = try renderAndMapTarget(
-            .strings,
-            target: target,
-            project: project
-        )
-        sideEffects += stringsSideEffects
-
-        let plistsSideEffects: [SideEffectDescriptor]
-        (target, plistsSideEffects) = try renderAndMapTarget(
-            .plists,
-            target: target,
-            project: project
-        )
-        sideEffects += plistsSideEffects
-
-        let fontsSideEffects: [SideEffectDescriptor]
-        (target, fontsSideEffects) = try renderAndMapTarget(
-            .fonts,
-            target: target,
-            project: project
-        )
-        sideEffects += fontsSideEffects
+        let sideEffects: [SideEffectDescriptor] = try project.resourceSynthesizers
+            .map { resourceSynthesizer throws -> (ResourceSynthesizer, String) in
+                switch resourceSynthesizer.template {
+                case let .file(path):
+                    let templateString = try FileHandler.shared.readTextFile(path)
+                    return (resourceSynthesizer, templateString)
+                case .defaultTemplate:
+                    return (resourceSynthesizer, try templateString(for: resourceSynthesizer.parser))
+                }
+            }
+            .reduce([]) { acc, current in
+                let (parser, templateString) = current
+                let interfaceTypeEffects: [SideEffectDescriptor]
+                (target, interfaceTypeEffects) = try renderAndMapTarget(
+                    parser,
+                    templateString: templateString,
+                    target: target,
+                    project: project
+                )
+                return acc + interfaceTypeEffects
+            }
 
         return (target, sideEffects)
     }
 
     /// - Returns: Modified `Target`, side effects, input paths and output paths which can then be later used in generate script
     private func renderAndMapTarget(
-        _ synthesizedResourceInterfaceType: SynthesizedResourceInterfaceType,
+        _ resourceSynthesizer: ResourceSynthesizer,
+        templateString: String,
         target: Target,
         project: Project
     ) throws -> (
@@ -97,43 +108,28 @@ public final class SynthesizedResourceInterfaceProjectMapper: ProjectMapping {
             .appending(component: Constants.DerivedDirectory.name)
             .appending(component: Constants.DerivedDirectory.sources)
 
-        let paths = try self.paths(for: synthesizedResourceInterfaceType, target: target)
+        let paths = try self.paths(for: resourceSynthesizer, target: target, developmentRegion: project.developmentRegion)
             .filter(isResourceEmpty)
 
-        let renderedInterfaces: [(String, String)]
+        let templateName: String
+        switch resourceSynthesizer.template {
+        case let .defaultTemplate(name):
+            templateName = name
+        case let .file(path):
+            templateName = path.basenameWithoutExt
+        }
 
-        switch synthesizedResourceInterfaceType {
-        case .plists:
-            renderedInterfaces = try paths.map { path in
-                let name = self.name(
-                    for: synthesizedResourceInterfaceType,
-                    path: path,
-                    target: target
-                )
-                return (
-                    name,
-                    try synthesizedResourceInterfacesGenerator.render(
-                        synthesizedResourceInterfaceType,
-                        name: name,
-                        paths: [path]
-                    )
-                )
-            }
-        case .assets, .fonts, .strings:
-            if paths.isEmpty {
-                renderedInterfaces = []
-                break
-            }
-            let name = self.name(
-                for: synthesizedResourceInterfaceType,
-                path: project.path,
-                target: target
-            )
+        let renderedInterfaces: [(String, String)]
+        if paths.isEmpty {
+            renderedInterfaces = []
+        } else {
+            let name = target.name.camelized.uppercasingFirst
             renderedInterfaces = [
                 (
-                    synthesizedResourceInterfaceType.name + "+" + name,
+                    templateName + "+" + name,
                     try synthesizedResourceInterfacesGenerator.render(
-                        synthesizedResourceInterfaceType,
+                        parser: resourceSynthesizer.parser,
+                        templateString: templateString,
                         name: name,
                         paths: paths
                     )
@@ -168,42 +164,43 @@ public final class SynthesizedResourceInterfaceProjectMapper: ProjectMapping {
         )
     }
 
-    private func name(
-        for synthesizedResourceInterfaceType: SynthesizedResourceInterfaceType,
-        path: AbsolutePath,
-        target: Target
-    ) -> String {
-        switch synthesizedResourceInterfaceType {
-        case .assets, .strings, .fonts:
-            return target.name.camelized.uppercasingFirst
-        case .plists:
-            return path.basenameWithoutExt.camelized.uppercasingFirst
-        }
-    }
-
     private func paths(
-        for synthesizedResourceInterfaceType: SynthesizedResourceInterfaceType,
-        target: Target
+        for resourceSynthesizer: ResourceSynthesizer,
+        target: Target,
+        developmentRegion: String?
     ) -> [AbsolutePath] {
         let resourcesPaths = target.resources
             .map(\.path)
-        switch synthesizedResourceInterfaceType {
-        case .assets:
-            return resourcesPaths
-                .filter { $0.extension == "xcassets" }
+
+        var paths = resourcesPaths
+            .filter { $0.extension.map(resourceSynthesizer.extensions.contains) ?? false }
+            .sorted()
+
+        switch resourceSynthesizer.parser {
         case .strings:
-            var seen: Set<String> = []
-            return resourcesPaths
-                .filter { $0.extension == "strings" || $0.extension == "stringsdict" }
-                .filter { seen.insert($0.basename).inserted }
-        case .plists:
-            return resourcesPaths
-                .filter { $0.extension == "plist" }
-        case .fonts:
-            let fontExtensions = ["otf", "ttc", "ttf"]
-            return resourcesPaths
-                .filter { $0.extension.map(fontExtensions.contains) ?? false }
+            // This file kind is localizable, let's order files based on it
+            var regionPriorityQueue = ["Base", "en"]
+            if let developmentRegion = developmentRegion {
+                regionPriorityQueue.insert(developmentRegion, at: 0)
+            }
+
+            // Let's sort paths moving the development region localization's one at first
+            let prioritizedPaths = paths.filter { path in
+                regionPriorityQueue.map { path.parentDirectory.basename.contains($0) }.contains(true)
+            }
+
+            let unprioritizedPaths = paths.filter { path in
+                !regionPriorityQueue.map { path.parentDirectory.basename.contains($0) }.contains(true)
+            }
+
+            paths = prioritizedPaths + unprioritizedPaths
+
+        case .assets, .coreData, .fonts, .interfaceBuilder, .json, .plists, .yaml, .files:
+            break
         }
+
+        var seen: Set<String> = []
+        return paths.filter { seen.insert($0.basename).inserted }
     }
 
     private func isResourceEmpty(_ path: AbsolutePath) throws -> Bool {
@@ -217,5 +214,22 @@ public final class SynthesizedResourceInterfaceProjectMapper: ProjectMapping {
             "Skipping synthesizing accessors for \(path.pathString) because its contents are empty."
         )
         return false
+    }
+
+    private func templateString(for parser: ResourceSynthesizer.Parser) throws -> String {
+        switch parser {
+        case .assets:
+            return SynthesizedResourceInterfaceTemplates.assetsTemplate
+        case .strings:
+            return SynthesizedResourceInterfaceTemplates.stringsTemplate
+        case .plists:
+            return SynthesizedResourceInterfaceTemplates.plistsTemplate
+        case .fonts:
+            return SynthesizedResourceInterfaceTemplates.fontsTemplate
+        case .coreData, .interfaceBuilder, .json, .yaml:
+            throw SynthesizedResourceInterfaceProjectMapperError.defaultTemplateNotAvailable(parser)
+        case .files:
+            return SynthesizedResourceInterfaceTemplates.filesTemplate
+        }
     }
 }

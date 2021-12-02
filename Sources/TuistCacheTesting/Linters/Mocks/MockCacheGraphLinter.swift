@@ -1,6 +1,7 @@
 import Foundation
 import TuistCache
 import TuistCore
+import TuistGraph
 
 public final class MockCacheGraphLinter: CacheGraphLinting {
     public var invokedLint = false

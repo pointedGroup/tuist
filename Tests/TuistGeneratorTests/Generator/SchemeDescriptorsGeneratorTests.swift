@@ -20,9 +20,8 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
     }
 
     override func tearDown() {
-        super.tearDown()
-
         subject = nil
+        super.tearDown()
     }
 
     // MARK: - Build Action Tests
@@ -40,12 +39,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             path: projectPath,
             xcodeProjPath: xcodeProjPath
         )
-        let graph = Graph.create(
-            projects: [project],
-            dependencies: [(project: project, target: app, dependencies: [])]
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                ],
+            ]
         )
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // Then
         let got = try subject.schemeBuildAction(
@@ -86,12 +88,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             path: projectPath,
             xcodeProjPath: xcodeProjPath
         )
-        let graph = Graph.create(
-            projects: [project],
-            dependencies: [(project: project, target: app, dependencies: [])]
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                ],
+            ]
         )
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeBuildAction(
@@ -144,12 +149,21 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             path: projectBPath,
             xcodeProjPath: xcodeProjBPath
         )
-        let graph = Graph.create(projects: [projectA, projectB], dependencies: [
-            (project: projectA, target: frameworkA, dependencies: []),
-            (project: projectB, target: frameworkB, dependencies: []),
-        ])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [
+                projectA.path: projectA,
+                projectB.path: projectB,
+            ],
+            targets: [
+                projectA.path: [
+                    frameworkA.name: frameworkA,
+                ],
+                projectB.path: [
+                    frameworkB.name: frameworkB,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // Then
         let got = try subject.schemeBuildAction(
@@ -204,11 +218,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: xcodeProjPath,
             targets: [target]
         )
-        let graph = Graph.create(projects: [project], dependencies: [
-            (project: project, target: target, dependencies: []),
-        ])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeBuildAction(
@@ -242,6 +260,43 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         XCTAssertEqual(postBuildableReference?.buildableIdentifier, "primary")
     }
 
+    func test_buildAction_runPostActionsOnFailure() throws {
+        // Given
+        let schemeA = Scheme(
+            name: "SchemeA",
+            buildAction: BuildAction(
+                targets: [],
+                runPostActionsOnFailure: true
+            )
+        )
+        let schemeB = Scheme(
+            name: "SchemeB",
+            buildAction: BuildAction(
+                targets: [],
+                runPostActionsOnFailure: false
+            )
+        )
+        let project = Project.test(schemes: [schemeA, schemeB])
+        let generatedProject = self.generatedProject(targets: project.targets)
+        let graph = Graph.test(projects: [project.path: project])
+        let graphTraverser = GraphTraverser(graph: graph)
+
+        // When
+        let schemeDescriptors = try subject.generateProjectSchemes(
+            project: project,
+            generatedProject: generatedProject,
+            graphTraverser: graphTraverser
+        )
+
+        // Then
+        // `runPostActionsOnFailure` is omitted when not enabled (Xcode automatically removes it)
+        let buildActions = schemeDescriptors.compactMap(\.xcScheme.buildAction)
+        XCTAssertEqual(buildActions.map(\.runPostActionsOnFailure), [
+            true,
+            nil,
+        ])
+    }
+
     // MARK: - Test Action Tests
 
     func test_schemeTestAction_when_testsTarget() throws {
@@ -258,10 +313,21 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test(name: "AppTests", testAction: testAction)
         let generatedProjects = createGeneratedProjects(projects: [project])
 
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: []),
-                                                                     (project: project, target: testTarget, dependencies: [target])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                    testTarget.name: testTarget,
+                ],
+            ],
+            dependencies: [
+                .target(name: testTarget.name, path: project.path): [
+                    .target(name: target.name, path: project.path),
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeTestAction(
@@ -286,6 +352,65 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         XCTAssertEqual(buildableReference.buildableIdentifier, "primary")
     }
 
+    func test_schemeTestAction_with_expandVariable() throws {
+        // Given
+        let target = Target.test(name: "App", product: .app)
+        let testTarget = Target.test(name: "AppTests", product: .unitTests)
+        let project = Project.test(targets: [target, testTarget])
+
+        let testAction = TestAction.test(
+            targets: [TestableTarget(target: TargetReference(projectPath: project.path, name: "AppTests"))],
+            arguments: nil,
+            expandVariableFromTarget: TargetReference(projectPath: project.path, name: "App")
+        )
+
+        let scheme = Scheme.test(name: "AppTests", testAction: testAction)
+        let generatedProjects = createGeneratedProjects(projects: [project])
+
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                    testTarget.name: testTarget,
+                ],
+            ],
+            dependencies: [
+                .target(name: testTarget.name, path: project.path): [
+                    .target(name: target.name, path: project.path),
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
+
+        // When
+        let got = try subject.schemeTestAction(
+            scheme: scheme,
+            graphTraverser: graphTraverser,
+            rootPath: project.path,
+            generatedProjects: generatedProjects
+        )
+
+        // Then
+        let result = try XCTUnwrap(got)
+        XCTAssertEqual(result.buildConfiguration, "Debug")
+        XCTAssertEqual(result.shouldUseLaunchSchemeArgsEnv, true)
+        let testable = try XCTUnwrap(result.testables.first)
+        let buildableReference = testable.buildableReference
+
+        XCTAssertEqual(result.macroExpansion?.buildableName, "App.app")
+        XCTAssertEqual(result.macroExpansion?.blueprintName, "App")
+        XCTAssertEqual(result.macroExpansion?.referencedContainer, "container:Project.xcodeproj")
+        XCTAssertEqual(result.macroExpansion?.buildableIdentifier, "primary")
+
+        XCTAssertEqual(testable.skipped, false)
+
+        XCTAssertEqual(buildableReference.referencedContainer, "container:Project.xcodeproj")
+        XCTAssertEqual(buildableReference.buildableName, "AppTests.xctest")
+        XCTAssertEqual(buildableReference.blueprintName, "AppTests")
+        XCTAssertEqual(buildableReference.buildableIdentifier, "primary")
+    }
+
     func test_schemeTestAction_with_codeCoverageTargets() throws {
         // Given
         let projectPath = AbsolutePath("/somepath/Project")
@@ -303,10 +428,21 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test(name: "AppTests", shared: true, buildAction: buildAction, testAction: testAction)
 
         let project = Project.test(path: projectPath, targets: [target, testTarget])
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: []),
-                                                                     (project: project, target: testTarget, dependencies: [target])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                    testTarget.name: testTarget,
+                ],
+            ],
+            dependencies: [
+                .target(name: testTarget.name, path: project.path): [
+                    .target(name: target.name, path: project.path),
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeTestAction(
@@ -330,9 +466,10 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test()
         let project = Project.test()
         let generatedProject = GeneratedProject.test()
-        let graph = Graph.create(projects: [project], dependencies: [])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // Then
         let got = try subject.schemeTestAction(
@@ -357,9 +494,10 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let planList = [TestPlan(path: planPath, isDefault: true)]
         let scheme = Scheme.test(testAction: TestAction.test(testPlans: planList))
         let generatedProject = GeneratedProject.test()
-        let graph = Graph.create(projects: [project], dependencies: [])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // Then
         let got = try subject.schemeTestAction(
@@ -391,10 +529,21 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let buildAction = BuildAction.test(targets: [TargetReference(projectPath: project.path, name: "App")])
 
         let scheme = Scheme.test(name: "AppTests", shared: true, buildAction: buildAction, testAction: testAction)
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: []),
-                                                                     (project: project, target: testTarget, dependencies: [testTarget])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                    testTarget.name: testTarget,
+                ],
+            ],
+            dependencies: [
+                .target(name: testTarget.name, path: project.path): [
+                    .target(name: target.name, path: project.path),
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeTestAction(
@@ -424,10 +573,22 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test(name: "AppTests", testAction: testAction)
         let generatedProjects = createGeneratedProjects(projects: [project])
 
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: []),
-                                                                     (project: project, target: testTarget, dependencies: [target])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                    testTarget.name: testTarget,
+                ],
+            ],
+            dependencies: [
+                .target(name: testTarget.name, path: project.path): [
+                    .target(name: target.name, path: project.path),
+                ],
+            ]
+        )
+
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeTestAction(
@@ -465,9 +626,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let project = Project.test(path: projectPath, targets: [testTarget])
 
         let generatedProjects = createGeneratedProjects(projects: [project])
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: testTarget, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    testTarget.name: testTarget,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeTestAction(
@@ -524,6 +691,7 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             executable: TargetReference(projectPath: projectPath, name: "App"),
             arguments: Arguments(environment: environment, launchArguments: launchArguments),
             options: .init(
+                language: "pl",
                 storeKitConfigurationPath: "/somepath/Workspace/Projects/Project/nested/configuration/configuration.storekit",
                 simulatedLocation: .reference("New York, NY, USA")
             )
@@ -538,9 +706,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: projectPath.appending(component: "Project.xcodeproj"),
             targets: [app]
         )
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: app, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeLaunchAction(
@@ -581,6 +755,7 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         XCTAssertEqual(result.storeKitConfigurationFileReference, .init(identifier: "../nested/configuration/configuration.storekit"))
         XCTAssertEqual(result.locationScenarioReference?.referenceType, "1")
         XCTAssertEqual(result.locationScenarioReference?.identifier, "New York, NY, USA")
+        XCTAssertEqual(result.language, "pl")
     }
 
     func test_schemeLaunchAction_argumentsOrder() throws {
@@ -603,9 +778,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let app = Target.test(name: "App", product: .app)
 
         let project = Project.test(path: projectPath, targets: [app])
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: app, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeLaunchAction(
@@ -641,9 +822,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
 
         let scheme = Scheme.test(name: "Library", buildAction: buildAction, runAction: launchAction)
         let project = Project.test(path: projectPath, targets: [target])
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeLaunchAction(
@@ -659,6 +846,7 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         XCTAssertEqual(result.buildConfiguration, "Debug")
         XCTAssertEqual(result.pathRunnable?.filePath, "/usr/bin/foo")
         XCTAssertFalse(result.disableMainThreadChecker)
+        XCTAssertEqual(result.language, nil)
     }
 
     func test_schemeLaunchAction_with_path() throws {
@@ -678,9 +866,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: projectPath.appending(component: "Project.xcodeproj"),
             targets: [target]
         )
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeLaunchAction(
@@ -715,9 +909,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: projectPath.appending(component: "Project.xcodeproj"),
             targets: [target]
         )
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeProfileAction(
@@ -767,9 +967,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: projectPath.appending(component: "Project.xcodeproj"),
             targets: [target]
         )
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeProfileAction(
@@ -813,9 +1019,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: projectPath.appending(component: "Project.xcodeproj"),
             targets: [target]
         )
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeProfileAction(
@@ -869,9 +1081,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             xcodeProjPath: projectPath.appending(component: "Project.xcodeproj"),
             targets: [target]
         )
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeProfileAction(
@@ -915,9 +1133,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test(buildAction: buildAction, analyzeAction: analyzeAction)
 
         let project = Project.test(path: projectPath, targets: [target])
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeAnalyzeAction(
@@ -951,9 +1175,15 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test(buildAction: buildAction, archiveAction: archiveAction)
 
         let project = Project.test(path: projectPath, targets: [target])
-        let graph = Graph.create(projects: [project], dependencies: [(project: project, target: target, dependencies: [])])
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    target.name: target,
+                ],
+            ]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let got = try subject.schemeArchiveAction(
@@ -979,17 +1209,29 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         let scheme = Scheme.test()
         let project = Project.test(targets: [app, framework, unitTests, uiTests], schemes: [scheme])
 
-        let graph = Graph.create(
-            project: project,
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                    framework.name: framework,
+                    unitTests.name: unitTests,
+                    uiTests.name: uiTests,
+                ],
+            ],
             dependencies: [
-                (target: app, dependencies: [framework]),
-                (target: framework, dependencies: []),
-                (target: unitTests, dependencies: [app]),
-                (target: uiTests, dependencies: [app]),
+                .target(name: app.name, path: project.path): [
+                    .target(name: framework.name, path: project.path),
+                ],
+                .target(name: unitTests.name, path: project.path): [
+                    .target(name: app.name, path: project.path),
+                ],
+                .target(name: uiTests.name, path: project.path): [
+                    .target(name: app.name, path: project.path),
+                ],
             ]
         )
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let result = try subject.generateProjectSchemes(
@@ -1023,15 +1265,21 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             ]
         )
 
-        let graph = Graph.create(
-            project: project,
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                    appExtension.name: appExtension,
+                ],
+            ],
             dependencies: [
-                (target: app, dependencies: [appExtension]),
-                (target: appExtension, dependencies: []),
+                .target(name: app.name, path: project.path): [
+                    .target(name: appExtension.name, path: project.path),
+                ],
             ]
         )
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let result = try subject.generateProjectSchemes(
@@ -1067,15 +1315,21 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
             ]
         )
 
-        let graph = Graph.create(
-            project: project,
+        let graph = Graph.test(
+            projects: [project.path: project],
+            targets: [
+                project.path: [
+                    app.name: app,
+                    appExtension.name: appExtension,
+                ],
+            ],
             dependencies: [
-                (target: app, dependencies: [appExtension]),
-                (target: appExtension, dependencies: []),
+                .target(name: app.name, path: project.path): [
+                    .target(name: appExtension.name, path: project.path),
+                ],
             ]
         )
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graphTraverser = GraphTraverser(graph: graph)
 
         // When
         let result = try subject.generateProjectSchemes(
@@ -1091,6 +1345,73 @@ final class SchemeDescriptorsGeneratorTests: XCTestCase {
         XCTAssertEqual(launchAction.launchAutomaticallySubstyle, "2")
         XCTAssertEqual(launchAction.selectedDebuggerIdentifier, "")
         XCTAssertEqual(launchAction.selectedLauncherIdentifier, "Xcode.IDEFoundation.Launcher.PosixSpawn")
+    }
+
+    func test_schemeGenerationLastUpgradeCheck_workspace() throws {
+        // Given
+        let target = Target.test()
+        let project = Project.test(
+            targets: [target],
+            schemes: [.test()],
+            lastUpgradeCheck: nil
+        )
+        let workspace = Workspace.test(
+            projects: [project.path],
+            schemes: [.test()],
+            lastUpgradeCheck: .init(13, 0, 0)
+        )
+
+        let graph = Graph.test(
+            path: project.path,
+            workspace: workspace,
+            projects: [project.path: project],
+            targets: [project.path: [target.name: target]],
+            dependencies: [:]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
+        let generatedProject = generatedProject(targets: project.targets)
+
+        // When
+        let result = try subject.generateWorkspaceSchemes(
+            workspace: workspace,
+            generatedProjects: [generatedProject.path: generatedProject],
+            graphTraverser: graphTraverser
+        )
+
+        XCTAssertEqual(
+            result.first?.xcScheme.lastUpgradeVersion,
+            "1300"
+        )
+    }
+
+    func test_schemeGenerationLastUpgradeCheck_project() throws {
+        // Given
+        let target = Target.test()
+        let project = Project.test(
+            targets: [target],
+            schemes: [.test()],
+            lastUpgradeCheck: .init(13, 0, 0)
+        )
+
+        let graph = Graph.test(
+            path: project.path,
+            projects: [project.path: project],
+            targets: [project.path: [target.name: target]],
+            dependencies: [:]
+        )
+        let graphTraverser = GraphTraverser(graph: graph)
+
+        // When
+        let result = try subject.generateProjectSchemes(
+            project: project,
+            generatedProject: generatedProject(targets: project.targets),
+            graphTraverser: graphTraverser
+        )
+
+        XCTAssertEqual(
+            result.first?.xcScheme.lastUpgradeVersion,
+            "1300"
+        )
     }
 
     // MARK: - Helpers

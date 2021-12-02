@@ -1,0 +1,16 @@
+[
+  {
+    "linkedFrameworksCount" : 1,
+    "targetDependenciesNames" : [
+
+    ],
+    "targetName" : "Data"
+  },
+  {
+    "linkedFrameworksCount" : 1,
+    "targetDependenciesNames" : [
+      "Data"
+    ],
+    "targetName" : "DataTests"
+  }
+]

@@ -2,43 +2,21 @@ import Foundation
 
 /// Contains the description of a dependency that can be installed using Carthage.
 public struct CarthageDependencies: Codable, Equatable {
-    /// List of depedencies that can be installed using Carthage.
+    /// List of dependencies that will be installed using Carthage.
     public let dependencies: [Dependency]
-    /// List of platforms for which you want to install depedencies. Refers to `--platform` Carthage flag.
-    public let platforms: Set<Platform>
-    /// List of options for Carthage installation.
-    public let options: Set<Options>
-
-    /// Initializes a new `CarthageDependencies` instance.
-    /// - Parameters:
-    ///   - dependencies: List of depedencies that can be installed using Carthage.
-    ///   - platforms: List of platforms for which you want to install depedencies. Refers to `--platform` Carthage flag.
-    ///   - options: List of options for Carthage installation.
-    init(
-        dependencies: [Dependency],
-        platforms: Set<Platform> = Set(Platform.allCases),
-        options: Set<Options> = []
-    ) {
-        self.dependencies = dependencies
-        self.platforms = platforms
-        self.options = options
-    }
 
     /// Creates `CarthageDependencies` instance.
-    /// - Parameters:
-    ///   - dependencies: List of depedencies that can be installed using Carthage.
-    ///   - platforms: List of platforms for which you want to install depedencies. Refers to `--platform` Carthage flag.
-    ///   - options: List of options for Carthage installation.
-    public static func carthage(
-        _ dependencies: [Dependency],
-        platforms: Set<Platform> = Set(Platform.allCases),
-        options: Set<Options> = []
-    ) -> Self {
-        .init(
-            dependencies: dependencies,
-            platforms: platforms,
-            options: options
-        )
+    /// - Parameter dependencies: List of dependencies that can be installed using Carthage.
+    public init(_ dependencies: [Dependency]) {
+        self.dependencies = dependencies
+    }
+}
+
+// MARK: - ExpressibleByArrayLiteral
+
+extension CarthageDependencies: ExpressibleByArrayLiteral {
+    public init(arrayLiteral elements: Dependency...) {
+        dependencies = elements
     }
 }
 
@@ -47,29 +25,21 @@ public struct CarthageDependencies: Codable, Equatable {
 public extension CarthageDependencies {
     /// Specifies origin of Carthage dependency.
     enum Dependency: Codable, Equatable {
+        /// GitHub repositories (both GitHub.com and GitHub Enterprise).
         case github(path: String, requirement: Requirement)
+        /// Other Git repositories.
         case git(path: String, requirement: Requirement)
+        /// Dependencies that are only available as compiled binary `.framework`s.
         case binary(path: String, requirement: Requirement)
     }
 
-    /// Specifies version requirement for Carthage depedency.
+    /// Specifies version requirement for Carthage dependency.
     enum Requirement: Codable, Equatable {
         case exact(Version)
         case upToNext(Version)
         case atLeast(Version)
         case branch(String)
         case revision(String)
-    }
-
-    /// The options that you can set for Carthage installation.
-    enum Options: String, Codable, Equatable {
-        /// When passed, Carthage will produce XCFrameworks instead of regular frameworks.
-        /// Refers to `--use-xcframeworks` Carthage flag.
-        /// **Note: It requires Carthage in version at least 0.37.0.**
-        case useXCFrameworks
-        /// When passed, Carthage will rebuild dependencies from source instead of using downloaded binaries when possible.
-        /// Refers to `--no-use-binaries` Carthage flag.
-        case noUseBinaries
     }
 }
 

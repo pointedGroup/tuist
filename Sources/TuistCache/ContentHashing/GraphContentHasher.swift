@@ -11,10 +11,10 @@ public protocol GraphContentHashing {
     ///     - filter: If `true`, `TargetNode` is hashed, otherwise it is skipped
     ///     - additionalStrings: Additional strings to be used when hashing graph
     func contentHashes(
-        for graph: TuistCore.Graph,
-        filter: (TargetNode) -> Bool,
+        for graph: Graph,
+        filter: (GraphTarget) -> Bool,
         additionalStrings: [String]
-    ) throws -> [TargetNode: String]
+    ) throws -> [GraphTarget: String]
 }
 
 public extension GraphContentHashing {
@@ -24,10 +24,10 @@ public extension GraphContentHashing {
     ///     - filter: If `true`, `TargetNode` is hashed, otherwise it is skipped
     ///     - additionalStrings: Additional strings to be used when hashing graph
     func contentHashes(
-        for graph: TuistCore.Graph,
-        filter: (TargetNode) -> Bool = { _ in true },
+        for graph: Graph,
+        filter: (GraphTarget) -> Bool = { _ in true },
         additionalStrings: [String] = []
-    ) throws -> [TargetNode: String] {
+    ) throws -> [GraphTarget: String] {
         try contentHashes(
             for: graph,
             filter: filter,
@@ -56,29 +56,41 @@ public final class GraphContentHasher: GraphContentHashing {
     // MARK: - GraphContentHashing
 
     public func contentHashes(
-        for graph: TuistCore.Graph,
-        filter: (TargetNode) -> Bool,
+        for graph: Graph,
+        filter: (GraphTarget) -> Bool,
         additionalStrings: [String]
-    ) throws -> [TargetNode: String] {
-        var visitedNodes: [TargetNode: Bool] = [:]
-        let hashableTargets = graph.targets.values.flatMap { (targets: [TargetNode]) -> [TargetNode] in
-            targets.compactMap { target in
-                if isHashable(
-                    target,
-                    visited: &visitedNodes,
-                    filter: filter
-                ) {
-                    return target
-                } else {
-                    return nil
-                }
+    ) throws -> [GraphTarget: String] {
+        let graphTraverser = GraphTraverser(graph: graph)
+        var visitedIsHasheableNodes: [GraphTarget: Bool] = [:]
+        var hashedTargets: [GraphHashedTarget: String] = [:]
+
+        let sortedCacheableTargets = try topologicalSort(
+            Array(graphTraverser.allTargets()),
+            successors: {
+                Array(graphTraverser.directTargetDependencies(path: $0.path, name: $0.target.name))
+            }
+        ).reversed()
+
+        let hashableTargets = sortedCacheableTargets.compactMap { target -> GraphTarget? in
+            if isHashable(
+                target,
+                graphTraverser: graphTraverser,
+                visited: &visitedIsHasheableNodes,
+                filter: filter
+            ) {
+                return target
+            } else {
+                return nil
             }
         }
-        let hashes = try hashableTargets.map {
-            try targetContentHasher.contentHash(
-                for: $0,
+        let hashes = try hashableTargets.map { (target: GraphTarget) -> String in
+            let hash = try targetContentHasher.contentHash(
+                for: target,
+                hashedTargets: &hashedTargets,
                 additionalStrings: additionalStrings
             )
+            hashedTargets[GraphHashedTarget(projectPath: target.path, targetName: target.target.name)] = hash
+            return hash
         }
         return Dictionary(uniqueKeysWithValues: zip(hashableTargets, hashes))
     }
@@ -86,23 +98,28 @@ public final class GraphContentHasher: GraphContentHashing {
     // MARK: - Private
 
     private func isHashable(
-        _ target: TargetNode,
-        visited: inout [TargetNode: Bool],
-        filter: (TargetNode) -> Bool
+        _ target: GraphTarget,
+        graphTraverser: GraphTraversing,
+        visited: inout [GraphTarget: Bool],
+        filter: (GraphTarget) -> Bool
     ) -> Bool {
         guard filter(target) else {
             visited[target] = false
             return false
         }
         if let visitedValue = visited[target] { return visitedValue }
-        let allTargetDependenciesAreHashable = target.targetDependencies
-            .allSatisfy {
-                isHashable(
-                    $0,
-                    visited: &visited,
-                    filter: filter
-                )
-            }
+        let allTargetDependenciesAreHashable = graphTraverser.directTargetDependencies(
+            path: target.path,
+            name: target.target.name
+        )
+        .allSatisfy {
+            isHashable(
+                $0,
+                graphTraverser: graphTraverser,
+                visited: &visited,
+                filter: filter
+            )
+        }
         visited[target] = allTargetDependenciesAreHashable
         return allTargetDependenciesAreHashable
     }

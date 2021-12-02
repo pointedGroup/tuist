@@ -28,6 +28,8 @@ final class StableXcodeProjIntegrationTests: TuistTestCase {
                 projects: 4,
                 testTargets: 10,
                 frameworkTargets: 10,
+                staticFrameworkTargets: 10,
+                staticLibraryTargets: 10,
                 schemes: 10,
                 sources: 200,
                 resources: 100,
@@ -35,8 +37,7 @@ final class StableXcodeProjIntegrationTests: TuistTestCase {
             )
             let modelGenerator = TestModelGenerator(rootPath: temporaryPath, config: config)
             let graph = try modelGenerator.generate()
-            let valueGraph = ValueGraph(graph: graph)
-            let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+            let graphTraverser = GraphTraverser(graph: graph)
 
             let workspaceDescriptor = try subject.generateWorkspace(graphTraverser: graphTraverser)
 

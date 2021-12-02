@@ -6,10 +6,11 @@ struct DependenciesCommand: ParsableCommand {
     static var configuration: CommandConfiguration {
         CommandConfiguration(
             commandName: "dependencies",
-            abstract: "[Experimental] A set of commands for project's dependencies managment.",
+            abstract: "A set of commands for dependencies' management.",
             subcommands: [
                 DependenciesFetchCommand.self,
                 DependenciesUpdateCommand.self,
+                DependenciesCleanCommand.self,
             ]
         )
     }

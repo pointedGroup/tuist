@@ -11,15 +11,15 @@ class TargetLinter: TargetLinting {
     // MARK: - Attributes
 
     private let settingsLinter: SettingsLinting
-    private let targetActionLinter: TargetActionLinting
+    private let targetScriptLinter: TargetScriptLinting
 
     // MARK: - Init
 
     init(settingsLinter: SettingsLinting = SettingsLinter(),
-         targetActionLinter: TargetActionLinting = TargetActionLinter())
+         targetScriptLinter: TargetScriptLinting = TargetScriptLinter())
     {
         self.settingsLinter = settingsLinter
-        self.targetActionLinter = targetActionLinter
+        self.targetScriptLinter = targetScriptLinter
     }
 
     // MARK: - TargetLinting
@@ -35,10 +35,11 @@ class TargetLinter: TargetLinting {
         issues.append(contentsOf: lintDeploymentTarget(target: target))
         issues.append(contentsOf: settingsLinter.lint(target: target))
         issues.append(contentsOf: lintDuplicateDependency(target: target))
+        issues.append(contentsOf: lintValidSourceFileCodeGenAttributes(target: target))
         issues.append(contentsOf: validateCoreDataModelsExist(target: target))
         issues.append(contentsOf: validateCoreDataModelVersionsExist(target: target))
-        target.actions.forEach { action in
-            issues.append(contentsOf: targetActionLinter.lint(action))
+        target.scripts.forEach { script in
+            issues.append(contentsOf: targetScriptLinter.lint(script))
         }
         return issues
     }
@@ -73,7 +74,7 @@ class TargetLinter: TargetLinting {
         if target.productName.unicodeScalars.allSatisfy(allowed.contains) == false {
             let reason = "Invalid product name '\(target.productName)'. This string must contain only alphanumeric (A-Z,a-z,0-9) and underscore (_) characters."
 
-            return [LintingIssue(reason: reason, severity: .error)]
+            return [LintingIssue(reason: reason, severity: .warning)]
         }
 
         return []
@@ -83,7 +84,11 @@ class TargetLinter: TargetLinting {
         let supportsSources = target.supportsSources
         let sources = target.sources
 
-        if supportsSources, sources.isEmpty {
+        let hasNoSources = supportsSources && sources.isEmpty
+        let hasNoDependencies = target.dependencies.isEmpty
+        let hasNoScripts = target.scripts.isEmpty
+
+        if hasNoSources, hasNoDependencies, hasNoScripts {
             return [LintingIssue(reason: "The target \(target.name) doesn't contain source files.", severity: .warning)]
         } else if !supportsSources, !sources.isEmpty {
             return [LintingIssue(reason: "Target \(target.name) cannot contain sources. \(target.platform) \(target.product) targets don't support source files", severity: .error)]
@@ -199,7 +204,7 @@ class TargetLinter: TargetLinting {
 
     private func lintValidPlatformProductCombinations(target: Target) -> [LintingIssue] {
         let invalidProductsForPlatforms: [Platform: [Product]] = [
-            .iOS: [.watch2App, .watch2Extension],
+            .iOS: [.watch2App, .watch2Extension, .tvTopShelfExtension],
         ]
 
         if let invalidProducts = invalidProductsForPlatforms[target.platform],
@@ -225,6 +230,23 @@ class TargetLinter: TargetLinting {
             .init(reason: "Target '\(target.name)' has duplicate \($0.element.key.typeName) dependency specified: '\($0.element.key.name)'", severity: .warning)
         }
     }
+
+    private func lintValidSourceFileCodeGenAttributes(target: Target) -> [LintingIssue] {
+        let knownSupportedExtensions = [
+            "intentdefinition",
+            "mlmodel",
+        ]
+        let unsupportedSourceFileAttributes = target.sources.filter {
+            $0.codeGen != nil && !knownSupportedExtensions.contains($0.path.extension ?? "")
+        }
+
+        return unsupportedSourceFileAttributes.map {
+            .init(
+                reason: "Target '\(target.name)' has a source file at path \($0.path) with unsupported `codeGen` attributes. Only \(knownSupportedExtensions.listed()) are known to support this.",
+                severity: .warning
+            )
+        }
+    }
 }
 
 private extension TargetDependency {
@@ -242,9 +264,7 @@ private extension TargetDependency {
             return "package"
         case .sdk:
             return "sdk"
-        case .cocoapods:
-            return "cocoapods"
-        case .xcFramework:
+        case .xcframework:
             return "xcframework"
         case .xctest:
             return "xctest"
@@ -259,7 +279,7 @@ private extension TargetDependency {
             return target
         case let .framework(path):
             return path.basename
-        case let .xcFramework(path):
+        case let .xcframework(path):
             return path.basename
         case let .library(path, _, _):
             return path.basename
@@ -267,8 +287,6 @@ private extension TargetDependency {
             return product
         case let .sdk(name, _):
             return name
-        case let .cocoapods(path):
-            return path.basename
         case .xctest:
             return "xctest"
         }

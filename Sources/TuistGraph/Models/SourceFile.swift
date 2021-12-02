@@ -2,7 +2,7 @@ import Foundation
 import TSCBasic
 
 /// A type that represents a source file.
-public struct SourceFile: ExpressibleByStringLiteral, Equatable {
+public struct SourceFile: ExpressibleByStringLiteral, Equatable, Codable {
     /// Source file path.
     public var path: AbsolutePath
 
@@ -15,13 +15,18 @@ public struct SourceFile: ExpressibleByStringLiteral, Equatable {
     /// This attribute is used by the content hasher used by the caching functionality.
     public var contentHash: String?
 
+    /// Source file code generation attribute
+    public let codeGen: FileCodeGen?
+
     public init(path: AbsolutePath,
                 compilerFlags: String? = nil,
-                contentHash: String? = nil)
+                contentHash: String? = nil,
+                codeGen: FileCodeGen? = nil)
     {
         self.path = path
         self.compilerFlags = compilerFlags
         self.contentHash = contentHash
+        self.codeGen = codeGen
     }
 
     // MARK: - ExpressibleByStringLiteral
@@ -30,5 +35,6 @@ public struct SourceFile: ExpressibleByStringLiteral, Equatable {
         path = AbsolutePath(value)
         compilerFlags = nil
         contentHash = nil
+        codeGen = nil
     }
 }

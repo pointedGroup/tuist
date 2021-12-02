@@ -3,25 +3,28 @@ import TSCBasic
 import TuistCore
 import TuistGraph
 import TuistGraphTesting
+import TuistLoader
 
 @testable import TuistCoreTesting
 @testable import TuistKit
 
 final class MockProjectEditorMapper: ProjectEditorMapping {
-    var mapStub: ValueGraph?
+    var mapStub: Graph?
     var mapArgs: [(
         name: String,
         tuistPath: AbsolutePath,
         sourceRootPath: AbsolutePath,
         destinationDirectory: AbsolutePath,
-        setupPath: AbsolutePath?,
         configPath: AbsolutePath?,
         dependenciesPath: AbsolutePath?,
         projectManifests: [AbsolutePath],
-        pluginManifests: [AbsolutePath],
+        editablePluginManifests: [EditablePluginManifest],
+        pluginProjectDescriptionHelpersModule: [ProjectDescriptionHelpersModule],
         helpers: [AbsolutePath],
         templates: [AbsolutePath],
-        projectDescriptionPath: AbsolutePath
+        tasks: [AbsolutePath],
+        projectDescriptionPath: AbsolutePath,
+        projectAutomationPath: AbsolutePath
     )] = []
 
     func map(
@@ -29,31 +32,35 @@ final class MockProjectEditorMapper: ProjectEditorMapping {
         tuistPath: AbsolutePath,
         sourceRootPath: AbsolutePath,
         destinationDirectory: AbsolutePath,
-        setupPath: AbsolutePath?,
         configPath: AbsolutePath?,
         dependenciesPath: AbsolutePath?,
         projectManifests: [AbsolutePath],
-        pluginManifests: [AbsolutePath],
+        editablePluginManifests: [EditablePluginManifest],
+        pluginProjectDescriptionHelpersModule: [ProjectDescriptionHelpersModule],
         helpers: [AbsolutePath],
         templates: [AbsolutePath],
-        projectDescriptionPath: AbsolutePath
-    ) throws -> ValueGraph {
+        tasks: [AbsolutePath],
+        projectDescriptionPath: AbsolutePath,
+        projectAutomationPath: AbsolutePath
+    ) throws -> Graph {
         mapArgs.append((
             name: name,
             tuistPath: tuistPath,
             sourceRootPath: sourceRootPath,
             destinationDirectory: destinationDirectory,
-            setupPath: setupPath,
             configPath: configPath,
             dependenciesPath: dependenciesPath,
             projectManifests: projectManifests,
-            pluginManifests: pluginManifests,
+            editablePluginManifests: editablePluginManifests,
+            pluginProjectDescriptionHelpersModule: pluginProjectDescriptionHelpersModule,
             helpers: helpers,
             templates: templates,
-            projectDescriptionPath: projectDescriptionPath
+            tasks: tasks,
+            projectDescriptionPath: projectDescriptionPath,
+            projectAutomationPath: projectAutomationPath
         ))
 
         if let mapStub = mapStub { return mapStub }
-        return ValueGraph.test()
+        return Graph.test()
     }
 }

@@ -2,6 +2,7 @@ import DOT
 import Foundation
 import GraphViz
 import TSCBasic
+import TuistGraph
 import TuistPlugin
 import TuistSupport
 import XcodeProj
@@ -13,32 +14,24 @@ import XCTest
 @testable import TuistSupportTesting
 
 final class GraphServiceTests: TuistUnitTestCase {
+    var manifestGraphLoader: MockManifestGraphLoader!
+    var graphVizMapper: MockGraphToGraphVizMapper!
     var subject: GraphService!
-    var graphVizGenerator: MockGraphVizGenerator!
-    var manifestLoader: MockManifestLoader!
-    var configLoader: MockConfigLoader!
 
     override func setUp() {
         super.setUp()
-        graphVizGenerator = MockGraphVizGenerator()
-        manifestLoader = MockManifestLoader()
-        configLoader = MockConfigLoader()
+        graphVizMapper = MockGraphToGraphVizMapper()
+        manifestGraphLoader = MockManifestGraphLoader()
 
         subject = GraphService(
-            graphVizGenerator: graphVizGenerator,
-            manifestLoader: manifestLoader,
-            pluginsService: PluginService(
-                manifestLoader: manifestLoader,
-                fileHandler: fileHandler,
-                gitHandler: MockGitHandler()
-            ),
-            configLoader: configLoader
+            graphVizGenerator: graphVizMapper,
+            manifestGraphLoader: manifestGraphLoader
         )
     }
 
     override func tearDown() {
-        graphVizGenerator = nil
-        manifestLoader = nil
+        graphVizMapper = nil
+        manifestGraphLoader = nil
         subject = nil
         super.tearDown()
     }
@@ -51,14 +44,7 @@ final class GraphServiceTests: TuistUnitTestCase {
 
         try FileHandler.shared.touch(graphPath)
         try FileHandler.shared.touch(projectManifestPath)
-
-        manifestLoader.manifestsAtStub = {
-            if $0 == temporaryPath { return Set([.project]) }
-            else { return Set([]) }
-        }
-
-        let graph = GraphViz.Graph()
-        graphVizGenerator.generateProjectStub = graph
+        graphVizMapper.stubMap = Graph()
 
         // When
         try subject.run(
@@ -74,6 +60,36 @@ final class GraphServiceTests: TuistUnitTestCase {
         let expected = "graph { }"
         // Then
         XCTAssertEqual(got, expected)
+        XCTAssertPrinterOutputContains("""
+        Deleting existing graph at \(graphPath.pathString)
+        Graph exported to \(graphPath.pathString)
+        """)
+    }
+
+    func test_run_whenJson() throws {
+        // Given
+        let temporaryPath = try self.temporaryPath()
+        let graphPath = temporaryPath.appending(component: "graph.json")
+        let projectManifestPath = temporaryPath.appending(component: "Project.swift")
+
+        try FileHandler.shared.touch(graphPath)
+        try FileHandler.shared.touch(projectManifestPath)
+
+        // When
+        try subject.run(
+            format: .json,
+            layoutAlgorithm: .dot,
+            skipTestTargets: false,
+            skipExternalDependencies: false,
+            targetsToFilter: [],
+            path: temporaryPath,
+            outputPath: temporaryPath
+        )
+        let got = try FileHandler.shared.readTextFile(graphPath)
+
+        let result = try JSONDecoder().decode(GraphOutput.self, from: got.data(using: .utf8)!)
+        // Then
+        XCTAssertEqual(result, GraphOutput(name: "graph", path: "/", projects: [:]))
         XCTAssertPrinterOutputContains("""
         Deleting existing graph at \(graphPath.pathString)
         Graph exported to \(graphPath.pathString)

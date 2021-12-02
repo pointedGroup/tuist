@@ -4,6 +4,22 @@ import XCTest
 @testable import TuistGraph
 
 final class ProductTests: XCTestCase {
+    func test_codable_app() {
+        // Given
+        let subject = Product.app
+
+        // Then
+        XCTAssertCodable(subject)
+    }
+
+    func test_codable_staticFramework() {
+        // Given
+        let subject = Product.staticFramework
+
+        // Then
+        XCTAssertCodable(subject)
+    }
+
     func test_xcodeValue() {
         XCTAssertEqual(Product.app.xcodeValue, PBXProductType.application)
         XCTAssertEqual(Product.staticLibrary.xcodeValue, PBXProductType.staticLibrary)
@@ -67,7 +83,7 @@ final class ProductTests: XCTestCase {
             .staticLibrary,
             .dynamicLibrary,
             .framework,
-            //            .tvExtension,
+            .tvTopShelfExtension,
             .unitTests,
             .uiTests,
         ]
@@ -75,8 +91,19 @@ final class ProductTests: XCTestCase {
     }
 
     func test_runnable() {
+        let runnables: [Product] = [
+            .app,
+            .appClip,
+            .commandLineTool,
+            .watch2App,
+            .appExtension,
+            .messagesExtension,
+            .stickerPackExtension,
+            .tvTopShelfExtension,
+            .watch2Extension,
+        ]
         Product.allCases.forEach { product in
-            if [.app, .appClip, .commandLineTool, .watch2App].contains(product) {
+            if runnables.contains(product) {
                 XCTAssertTrue(product.runnable)
             } else {
                 XCTAssertFalse(product.runnable)

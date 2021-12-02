@@ -17,10 +17,9 @@ final class SettingsHelpersTests: XCTestCase {
     }
 
     override func tearDown() {
-        super.tearDown()
-
         settings = nil
         subject = nil
+        super.tearDown()
     }
 
     func testExtend_whenNoSettings() {
@@ -181,6 +180,8 @@ final class SettingsHelpersTests: XCTestCase {
         XCTAssertEqual(subject.settingsProviderProduct(.test(product: .unitTests)), .unitTests)
         XCTAssertEqual(subject.settingsProviderProduct(.test(product: .uiTests)), .uiTests)
         XCTAssertEqual(subject.settingsProviderProduct(.test(product: .appClip)), .application)
+        XCTAssertEqual(subject.settingsProviderProduct(.test(product: .appExtension)), .appExtension)
+        XCTAssertEqual(subject.settingsProviderProduct(.test(product: .messagesExtension)), .appExtension)
         XCTAssertNil(subject.settingsProviderProduct(.test(product: .bundle)))
     }
 

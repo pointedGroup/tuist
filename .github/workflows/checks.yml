@@ -8,50 +8,72 @@ on:
       - main
   pull_request:
     paths:
+      - Tuist/Dependencies/Lockfiles/Package.resolved
+      - Package.resolved
       - Sources/**
       - Tests/**
-      - tools/fixturegen/**
-      - tools/tuistbench/**
+      - projects/fixturegen/**
+      - projects/tuistbench/**
+      - projects/fourier/**
+      - .github/workflows/checks.yml
+
+concurrency:
+  group: checks-${{ github.head_ref }}
+  cancel-in-progress: true
 
 env:
-  RUBY_VERSION: '2.7.2'
+  RUBY_VERSION: '3.0.2'
 
 jobs:
-  swiftformat:
-    name: SwiftFormat with Xcode ${{ matrix.xcode }}
-    runs-on: macos-latest
+  format:
+    name: Format code with Xcode ${{ matrix.xcode }}
+    runs-on: macOS-11
     strategy:
       matrix:
-        xcode: ['11.5', '12.3']
+        xcode: ['13.0']
     steps:
       - uses: actions/checkout@v1
       - name: Select Xcode ${{ matrix.xcode }}
         run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
-      - uses: actions/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ env.RUBY_VERSION }}
-      - name: Install Bundler 2.1.4
-        run: gem install bundler --version 2.1.4
-      - name: Install Bundler dependencies
-        run: bundle install
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
       - name: Run swiftformat
-        run: bundle exec rake swift_format
-  swiftlint:
-    name: Swiftlint with Xcode ${{ matrix.xcode }}
-    runs-on: macOS-latest
+        run: ./fourier format swift
+  lint_lockfiles:
+    name: Lint lockfiles
+    runs-on: macOS-11
     strategy:
       matrix:
-        xcode: ['11.5', '12.3']
+        xcode: ['13.0']
     steps:
       - uses: actions/checkout@v1
       - name: Select Xcode
         run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
-      - uses: actions/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ env.RUBY_VERSION }}
-      - name: Install Bundler 2.1.4
-        run: gem install bundler --version 2.1.4
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
       - name: Install Bundler dependencies
         run: bundle install
-      - name: Run swiftlint
-        run: bundle exec rake swift_lint
+      - name: Run
+        run: ./fourier lint lockfiles

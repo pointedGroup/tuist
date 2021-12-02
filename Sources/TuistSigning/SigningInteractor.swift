@@ -82,7 +82,7 @@ public final class SigningInteractor: SigningInteracting {
 
     // MARK: - Helpers
 
-    private func install(target: ValueGraphTarget,
+    private func install(target: GraphTarget,
                          keychainPath: AbsolutePath,
                          certificates: [Fingerprint: Certificate],
                          provisioningProfiles: [TargetName: [ConfigurationName: ProvisioningProfile]]) throws
@@ -110,7 +110,9 @@ public final class SigningInteractor: SigningInteracting {
         try signingPairs.map(\.certificate).forEach {
             try signingInstaller.installCertificate($0, keychainPath: keychainPath)
         }
-        try signingPairs.map(\.provisioningProfile).forEach(signingInstaller.installProvisioningProfile)
+        try signingPairs.map(\.provisioningProfile)
+            .flatMap(signingInstaller.installProvisioningProfile)
+            .printAndThrowIfNeeded()
         try signingPairs.map(\.provisioningProfile).flatMap {
             signingLinter.lint(provisioningProfile: $0, target: target.target)
         }.printAndThrowIfNeeded()

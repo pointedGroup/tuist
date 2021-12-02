@@ -11,27 +11,25 @@ public struct TuistCommand: ParsableCommand {
             commandName: "tuist",
             abstract: "Generate, build and test your Xcode projects.",
             subcommands: [
-                GenerateCommand.self,
-                UpCommand.self,
-                FocusCommand.self,
-                EditCommand.self,
-                SecretCommand.self,
-                DumpCommand.self,
-                GraphCommand.self,
-                LintCommand.self,
-                VersionCommand.self,
                 BuildCommand.self,
-                TestCommand.self,
-                CreateIssueCommand.self,
-                ScaffoldCommand.self,
+                CacheCommand.self,
+                CleanCommand.self,
+                DependenciesCommand.self,
+                DumpCommand.self,
+                EditCommand.self,
+                ExecCommand.self,
+                FocusCommand.self,
+                GenerateCommand.self,
+                GraphCommand.self,
                 InitCommand.self,
                 CloudCommand.self,
-                CacheCommand.self,
-                SigningCommand.self,
+                LintCommand.self,
                 MigrationCommand.self,
-                CleanCommand.self,
-                DocCommand.self,
-                DependenciesCommand.self,
+                RunCommand.self,
+                ScaffoldCommand.self,
+                SigningCommand.self,
+                TestCommand.self,
+                VersionCommand.self,
             ]
         )
     }
@@ -52,6 +50,9 @@ public struct TuistCommand: ParsableCommand {
             }
             if processedArguments.first == InitCommand.configuration.commandName {
                 try InitCommand.preprocess(processedArguments)
+            }
+            if processedArguments.first == ExecCommand.configuration.commandName {
+                try ExecCommand.preprocess(processedArguments)
             }
             command = try parseAsRoot(processedArguments)
         } catch {

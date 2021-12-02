@@ -6,18 +6,18 @@ import TuistGraph
 import TuistSupport
 
 enum CacheRemoteStorageError: FatalError, Equatable {
-    case frameworkNotFound(hash: String)
+    case artifactNotFound(hash: String)
 
     var type: ErrorType {
         switch self {
-        case .frameworkNotFound: return .abort
+        case .artifactNotFound: return .abort
         }
     }
 
     var description: String {
         switch self {
-        case let .frameworkNotFound(hash):
-            return "The downloaded artifact with hash '\(hash)' has an incorrect format and doesn't contain a xcframework nor a framework."
+        case let .artifactNotFound(hash):
+            return "The downloaded artifact with hash '\(hash)' has an incorrect format and doesn't contain xcframework, framework or bundle."
         }
     }
 }
@@ -29,36 +29,40 @@ public final class CacheRemoteStorage: CacheStoring {
     private let cloudClient: CloudClienting
     private let fileClient: FileClienting
     private let fileArchiverFactory: FileArchivingFactorying
-    private let cloudCacheResponseFactory: CloudCacheResourceFactorying
+    private let cloudCacheResourceFactory: CloudCacheResourceFactorying
+    private let cacheDirectoriesProvider: CacheDirectoriesProviding
 
     // MARK: - Init
 
-    public convenience init(cloudConfig: Cloud, cloudClient: CloudClienting) {
+    public convenience init(cloudConfig: Cloud, cloudClient: CloudClienting, cacheDirectoriesProvider: CacheDirectoriesProviding) {
         self.init(
             cloudClient: cloudClient,
             fileArchiverFactory: FileArchivingFactory(),
             fileClient: FileClient(),
-            cloudCacheResponseFactory: CloudCacheResourceFactory(cloudConfig: cloudConfig)
+            cloudCacheResourceFactory: CloudCacheResourceFactory(cloudConfig: cloudConfig),
+            cacheDirectoriesProvider: cacheDirectoriesProvider
         )
     }
 
     init(cloudClient: CloudClienting,
          fileArchiverFactory: FileArchivingFactorying,
          fileClient: FileClienting,
-         cloudCacheResponseFactory: CloudCacheResourceFactorying)
+         cloudCacheResourceFactory: CloudCacheResourceFactorying,
+         cacheDirectoriesProvider: CacheDirectoriesProviding)
     {
         self.cloudClient = cloudClient
         self.fileArchiverFactory = fileArchiverFactory
         self.fileClient = fileClient
-        self.cloudCacheResponseFactory = cloudCacheResponseFactory
+        self.cloudCacheResourceFactory = cloudCacheResourceFactory
+        self.cacheDirectoriesProvider = cacheDirectoriesProvider
     }
 
     // MARK: - CacheStoring
 
-    public func exists(hash: String) -> Single<Bool> {
+    public func exists(name: String, hash: String) -> Single<Bool> {
         do {
             let successRange = 200 ..< 300
-            let resource = try cloudCacheResponseFactory.existsResource(hash: hash)
+            let resource = try cloudCacheResourceFactory.existsResource(name: name, hash: hash)
             return cloudClient.request(resource)
                 .flatMap { _, response in
                     .just(successRange.contains(response.statusCode))
@@ -75,9 +79,9 @@ public final class CacheRemoteStorage: CacheStoring {
         }
     }
 
-    public func fetch(hash: String) -> Single<AbsolutePath> {
+    public func fetch(name: String, hash: String) -> Single<AbsolutePath> {
         do {
-            let resource = try cloudCacheResponseFactory.fetchResource(hash: hash)
+            let resource = try cloudCacheResourceFactory.fetchResource(name: name, hash: hash)
             return cloudClient
                 .request(resource)
                 .map(\.object.data.url)
@@ -98,12 +102,13 @@ public final class CacheRemoteStorage: CacheStoring {
         }
     }
 
-    public func store(hash: String, paths: [AbsolutePath]) -> Completable {
+    public func store(name: String, hash: String, paths: [AbsolutePath]) -> Completable {
         do {
             let archiver = try fileArchiverFactory.makeFileArchiver(for: paths)
             let destinationZipPath = try archiver.zip(name: hash)
             let md5 = try FileHandler.shared.urlSafeBase64MD5(path: destinationZipPath)
-            let storeResource = try cloudCacheResponseFactory.storeResource(
+            let storeResource = try cloudCacheResourceFactory.storeResource(
+                name: name,
                 hash: hash,
                 contentMD5: md5
             )
@@ -115,7 +120,7 @@ public final class CacheRemoteStorage: CacheStoring {
                     let deleteCompletable = self.deleteZipArchiveCompletable(archiver: archiver)
                     return self.fileClient.upload(file: destinationZipPath, hash: hash, to: url)
                         .flatMapCompletable { _ in
-                            self.verify(hash: hash, contentMD5: md5)
+                            self.verify(name: name, hash: hash, contentMD5: md5)
                         }
                         .catchError {
                             deleteCompletable.concat(.error($0))
@@ -128,9 +133,10 @@ public final class CacheRemoteStorage: CacheStoring {
 
     // MARK: - Private
 
-    private func verify(hash: String, contentMD5: String) -> Completable {
+    private func verify(name: String, hash: String, contentMD5: String) -> Completable {
         do {
-            let verifyUploadResource = try cloudCacheResponseFactory.verifyUploadResource(
+            let verifyUploadResource = try cloudCacheResourceFactory.verifyUploadResource(
+                name: name,
                 hash: hash,
                 contentMD5: contentMD5
             )
@@ -142,31 +148,33 @@ public final class CacheRemoteStorage: CacheStoring {
         }
     }
 
-    private func frameworkPath(in archive: AbsolutePath) -> AbsolutePath? {
+    private func artifactPath(in archive: AbsolutePath) -> AbsolutePath? {
         if let xcframeworkPath = FileHandler.shared.glob(archive, glob: "*.xcframework").first {
             return xcframeworkPath
         } else if let frameworkPath = FileHandler.shared.glob(archive, glob: "*.framework").first {
             return frameworkPath
+        } else if let bundlePath = FileHandler.shared.glob(archive, glob: "*.bundle").first {
+            return bundlePath
         }
         return nil
     }
 
     private func unzip(downloadedArchive: AbsolutePath, hash: String) throws -> AbsolutePath {
         let zipPath = try FileHandler.shared.changeExtension(path: downloadedArchive, to: "zip")
-        let archiveDestination = Environment.shared.buildCacheDirectory.appending(component: hash)
+        let archiveDestination = cacheDirectoriesProvider.cacheDirectory(for: .builds).appending(component: hash)
         let fileUnarchiver = try fileArchiverFactory.makeFileUnarchiver(for: zipPath)
         let unarchivedDirectory = try fileUnarchiver.unzip()
         defer {
             try? fileUnarchiver.delete()
         }
-        if frameworkPath(in: unarchivedDirectory) == nil {
-            throw CacheRemoteStorageError.frameworkNotFound(hash: hash)
+        if artifactPath(in: unarchivedDirectory) == nil {
+            throw CacheRemoteStorageError.artifactNotFound(hash: hash)
         }
         if !FileHandler.shared.exists(archiveDestination.parentDirectory) {
             try FileHandler.shared.createFolder(archiveDestination.parentDirectory)
         }
         try FileHandler.shared.move(from: unarchivedDirectory, to: archiveDestination)
-        return frameworkPath(in: archiveDestination)!
+        return artifactPath(in: archiveDestination)!
     }
 
     private func deleteZipArchiveCompletable(archiver: FileArchiving) -> Completable {

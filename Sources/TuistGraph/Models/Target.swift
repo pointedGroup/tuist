@@ -1,11 +1,15 @@
 import Foundation
 import TSCBasic
 
-public struct Target: Equatable, Hashable, Comparable {
+public struct Target: Equatable, Hashable, Comparable, Codable {
     // MARK: - Static
 
-    public static let validSourceExtensions: [String] = ["m", "swift", "mm", "cpp", "c", "d", "s", "intentdefinition", "xcmappingmodel", "metal", "mlmodel"]
-    public static let validFolderExtensions: [String] = ["framework", "bundle", "app", "xcassets", "appiconset", "scnassets"]
+    public static let validSourceExtensions: [String] = [
+        "m", "swift", "mm", "cpp", "cc", "c", "d", "s", "intentdefinition", "xcmappingmodel", "metal", "mlmodel",
+    ]
+    public static let validFolderExtensions: [String] = [
+        "framework", "bundle", "app", "xcassets", "appiconset", "scnassets",
+    ]
 
     // MARK: - Attributes
 
@@ -27,12 +31,13 @@ public struct Target: Equatable, Hashable, Comparable {
     public var copyFiles: [CopyFilesAction]
     public var headers: Headers?
     public var coreDataModels: [CoreDataModel]
-    public var actions: [TargetAction]
+    public var scripts: [TargetScript]
     public var environment: [String: String]
     public var launchArguments: [LaunchArgument]
     public var filesGroup: ProjectGroup
-    public var scripts: [TargetScript]
+    public var rawScriptBuildPhases: [RawScriptBuildPhase]
     public var playgrounds: [AbsolutePath]
+    public let additionalFiles: [FileElement]
     public var prune: Bool
 
     // MARK: - Init
@@ -51,13 +56,14 @@ public struct Target: Equatable, Hashable, Comparable {
                 copyFiles: [CopyFilesAction] = [],
                 headers: Headers? = nil,
                 coreDataModels: [CoreDataModel] = [],
-                actions: [TargetAction] = [],
+                scripts: [TargetScript] = [],
                 environment: [String: String] = [:],
                 launchArguments: [LaunchArgument] = [],
                 filesGroup: ProjectGroup,
                 dependencies: [TargetDependency] = [],
-                scripts: [TargetScript] = [],
+                rawScriptBuildPhases: [RawScriptBuildPhase] = [],
                 playgrounds: [AbsolutePath] = [],
+                additionalFiles: [FileElement] = [],
                 prune: Bool = false)
     {
         self.name = name
@@ -74,13 +80,14 @@ public struct Target: Equatable, Hashable, Comparable {
         self.copyFiles = copyFiles
         self.headers = headers
         self.coreDataModels = coreDataModels
-        self.actions = actions
+        self.scripts = scripts
         self.environment = environment
         self.launchArguments = launchArguments
         self.filesGroup = filesGroup
         self.dependencies = dependencies
-        self.scripts = scripts
+        self.rawScriptBuildPhases = rawScriptBuildPhases
         self.playgrounds = playgrounds
+        self.additionalFiles = additionalFiles
         self.prune = prune
     }
 
@@ -89,14 +96,14 @@ public struct Target: Equatable, Hashable, Comparable {
         [.dynamicLibrary, .staticLibrary, .framework, .staticFramework].contains(product)
     }
 
-    /// Returns target's pre actions.
-    public var preActions: [TargetAction] {
-        actions.filter { $0.order == .pre }
+    /// Returns target's pre scripts.
+    public var preScripts: [TargetScript] {
+        scripts.filter { $0.order == .pre }
     }
 
-    /// Returns target's post actions.
-    public var postActions: [TargetAction] {
-        actions.filter { $0.order == .post }
+    /// Returns target's post scripts.
+    public var postScripts: [TargetScript] {
+        scripts.filter { $0.order == .post }
     }
 
     /// Target can link static products (e.g. an app can link a staticLibrary)
@@ -137,10 +144,25 @@ public struct Target: Equatable, Hashable, Comparable {
     /// Returns true if the target supports hosting resources
     public var supportsResources: Bool {
         switch product {
-        case .dynamicLibrary, .staticLibrary, .staticFramework:
-            return false
-        default:
+        case .app,
+             .framework,
+             .unitTests,
+             .uiTests,
+             .bundle,
+             .appExtension,
+             .watch2App,
+             .watch2Extension,
+             .tvTopShelfExtension,
+             .messagesExtension,
+             .stickerPackExtension,
+             .appClip:
             return true
+
+        case .commandLineTool,
+             .dynamicLibrary,
+             .staticLibrary,
+             .staticFramework:
+            return false
         }
     }
 
@@ -150,6 +172,23 @@ public struct Target: Equatable, Hashable, Comparable {
             return true
         }
         return false
+    }
+
+    /// For iOS targets that support macOS (Catalyst), this value is used
+    /// in the generated build files of the target dependency products to
+    /// indicate the build system that the dependency should be compiled
+    /// with Catalyst compatibility.
+    public var targetDependencyBuildFilesPlatformFilter: BuildFilePlatformFilter? {
+        switch deploymentTarget {
+        case let .iOS(_, devices):
+            if devices.contains(.mac) {
+                return .catalyst
+            } else {
+                return .ios
+            }
+        default:
+            return nil
+        }
     }
 
     // MARK: - Equatable
@@ -167,7 +206,7 @@ public struct Target: Equatable, Hashable, Comparable {
             lhs.resources == rhs.resources &&
             lhs.headers == rhs.headers &&
             lhs.coreDataModels == rhs.coreDataModels &&
-            lhs.actions == rhs.actions &&
+            lhs.scripts == rhs.scripts &&
             lhs.dependencies == rhs.dependencies &&
             lhs.environment == rhs.environment
     }
@@ -190,11 +229,30 @@ public struct Target: Equatable, Hashable, Comparable {
         return copy
     }
 
-    /// Returns a new copy of the target with the given actions.
-    /// - Parameter actions: Actions to be set to the copied instance.
-    public func with(actions: [TargetAction]) -> Target {
+    /// Returns a new copy of the target with the given scripts.
+    /// - Parameter scripts: Actions to be set to the copied instance.
+    public func with(scripts: [TargetScript]) -> Target {
         var copy = self
-        copy.actions = actions
+        copy.scripts = scripts
+        return copy
+    }
+
+    /// Returns a new copy of the target with the given additional settings
+    /// - Parameter settingsDictionary: settings to be added.
+    public func with(additionalSettings: SettingsDictionary) -> Target {
+        var copy = self
+        if let oldSettings = copy.settings {
+            copy.settings = Settings(
+                base: oldSettings.base.merging(additionalSettings, uniquingKeysWith: { $1 }),
+                configurations: oldSettings.configurations,
+                defaultSettings: oldSettings.defaultSettings
+            )
+        } else {
+            copy.settings = Settings(
+                base: additionalSettings,
+                configurations: [:]
+            )
+        }
         return copy
     }
 

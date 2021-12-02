@@ -50,6 +50,8 @@ public protocol FileHandling: AnyObject {
     func readFile(_ at: AbsolutePath) throws -> Data
     func readTextFile(_ at: AbsolutePath) throws -> String
     func readPlistFile<T: Decodable>(_ at: AbsolutePath) throws -> T
+    /// Determine temporary directory either default for user or specified by ENV variable
+    func determineTemporaryDirectory() throws -> AbsolutePath
     func temporaryDirectory() throws -> AbsolutePath
     func inTemporaryDirectory(_ closure: (AbsolutePath) throws -> Void) throws
     func inTemporaryDirectory(removeOnCompletion: Bool, _ closure: (AbsolutePath) throws -> Void) throws
@@ -70,6 +72,8 @@ public protocol FileHandling: AnyObject {
     func fileSize(path: AbsolutePath) throws -> UInt64
     func changeExtension(path: AbsolutePath, to newExtension: String) throws -> AbsolutePath
     func resolveSymlinks(_ path: AbsolutePath) -> AbsolutePath
+    func fileAttributes(at path: AbsolutePath) throws -> [FileAttributeKey: Any]
+    func filesAndDirectoriesContained(in path: AbsolutePath) -> [AbsolutePath]?
 }
 
 public class FileHandler: FileHandling {
@@ -118,6 +122,10 @@ public class FileHandler: FileHandling {
     public func temporaryDirectory() throws -> AbsolutePath {
         let directory = try TemporaryDirectory(removeTreeOnDeinit: false)
         return directory.path
+    }
+
+    public func determineTemporaryDirectory() throws -> AbsolutePath {
+        try determineTempDirectory()
     }
 
     public func inTemporaryDirectory<Result>(_ closure: (AbsolutePath) throws -> Result) throws -> Result {
@@ -257,8 +265,20 @@ public class FileHandler: FileHandling {
         try fileManager.contentsOfDirectory(atPath: path.pathString).map { AbsolutePath(path, $0) }
     }
 
+    public func createSymbolicLink(at path: AbsolutePath, destination: AbsolutePath) throws {
+        try fileManager.createSymbolicLink(atPath: path.pathString, withDestinationPath: destination.pathString)
+    }
+
     public func resolveSymlinks(_ path: AbsolutePath) -> AbsolutePath {
         TSCBasic.resolveSymlinks(path)
+    }
+
+    public func fileAttributes(at path: AbsolutePath) throws -> [FileAttributeKey: Any] {
+        try fileManager.attributesOfItem(atPath: path.pathString)
+    }
+
+    public func filesAndDirectoriesContained(in path: AbsolutePath) -> [AbsolutePath]? {
+        fileManager.subpaths(atPath: path.pathString)?.map { path.appending(RelativePath($0)) }
     }
 
     // MARK: - MD5
@@ -270,7 +290,9 @@ public class FileHandler: FileHandling {
 
         _ = digestData.withUnsafeMutableBytes { digestBytes -> UInt8 in
             data.withUnsafeBytes { messageBytes -> UInt8 in
-                if let messageBytesBaseAddress = messageBytes.baseAddress, let digestBytesBlindMemory = digestBytes.bindMemory(to: UInt8.self).baseAddress {
+                if let messageBytesBaseAddress = messageBytes.baseAddress,
+                    let digestBytesBlindMemory = digestBytes.bindMemory(to: UInt8.self).baseAddress
+                {
                     let messageLength = CC_LONG(data.count)
                     CC_MD5(messageBytesBaseAddress, messageLength, digestBytesBlindMemory)
                 }

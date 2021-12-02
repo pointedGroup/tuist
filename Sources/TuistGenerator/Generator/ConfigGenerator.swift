@@ -20,6 +20,7 @@ protocol ConfigGenerating: AnyObject {
                               sourceRootPath: AbsolutePath) throws
 }
 
+// swiftlint:disable:next type_body_length
 final class ConfigGenerator: ConfigGenerating {
     // MARK: - Attributes
 
@@ -96,7 +97,6 @@ final class ConfigGenerator: ConfigGenerating {
         let configurations = Dictionary(uniqueKeysWithValues: configurationsTuples)
         let nonEmptyConfigurations = !configurations.isEmpty ? configurations : Settings.default.configurations
         let orderedConfigurations = nonEmptyConfigurations.sortedByBuildConfigurationName()
-        let swiftVersion = try System.shared.swiftVersion()
         try orderedConfigurations.forEach {
             try generateTargetSettingsFor(
                 target: target,
@@ -107,7 +107,6 @@ final class ConfigGenerator: ConfigGenerating {
                 graphTraverser: graphTraverser,
                 pbxproj: pbxproj,
                 configurationList: configurationList,
-                swiftVersion: swiftVersion,
                 sourceRootPath: sourceRootPath
             )
         }
@@ -154,7 +153,6 @@ final class ConfigGenerator: ConfigGenerating {
                                            graphTraverser: GraphTraversing,
                                            pbxproj: PBXProj,
                                            configurationList: XCConfigurationList,
-                                           swiftVersion: String,
                                            sourceRootPath: AbsolutePath) throws
     {
         let settingsHelper = SettingsHelper()
@@ -167,8 +165,7 @@ final class ConfigGenerator: ConfigGenerating {
             buildSettings: &settings,
             target: target,
             graphTraverser: graphTraverser,
-            swiftVersion: swiftVersion,
-            projectPath: project.path,
+            project: project,
             sourceRootPath: sourceRootPath
         )
 
@@ -193,27 +190,37 @@ final class ConfigGenerator: ConfigGenerating {
     private func updateTargetDerived(buildSettings settings: inout SettingsDictionary,
                                      target: Target,
                                      graphTraverser: GraphTraversing,
-                                     swiftVersion: String,
-                                     projectPath: AbsolutePath,
+                                     project: Project,
                                      sourceRootPath: AbsolutePath)
     {
-        settings.merge(generalTargetDerivedSettings(target: target, swiftVersion: swiftVersion, sourceRootPath: sourceRootPath)) { $1 }
-        settings.merge(testBundleTargetDerivedSettings(target: target, graphTraverser: graphTraverser, projectPath: projectPath)) { $1 }
+        settings.merge(
+            generalTargetDerivedSettings(
+                target: target,
+                sourceRootPath: sourceRootPath,
+                project: project
+            )
+        ) { $1 }
+        settings.merge(testBundleTargetDerivedSettings(target: target, graphTraverser: graphTraverser, projectPath: project.path)) { $1 }
         settings.merge(deploymentTargetDerivedSettings(target: target)) { $1 }
-        settings.merge(watchTargetDerivedSettings(target: target, graphTraverser: graphTraverser, projectPath: projectPath)) { $1 }
+        settings.merge(watchTargetDerivedSettings(target: target, graphTraverser: graphTraverser, projectPath: project.path)) { $1 }
     }
 
-    private func generalTargetDerivedSettings(target: Target,
-                                              swiftVersion: String,
-                                              sourceRootPath: AbsolutePath) -> SettingsDictionary
-    {
+    private func generalTargetDerivedSettings(
+        target: Target,
+        sourceRootPath: AbsolutePath,
+        project: Project
+    ) -> SettingsDictionary {
         var settings: SettingsDictionary = [:]
         settings["PRODUCT_BUNDLE_IDENTIFIER"] = .string(target.bundleId)
 
         // Info.plist
         if let infoPlist = target.infoPlist, let path = infoPlist.path {
             let relativePath = path.relative(to: sourceRootPath).pathString
-            settings["INFOPLIST_FILE"] = .string("$(SRCROOT)/\(relativePath)")
+            if project.xcodeProjPath.parentDirectory == sourceRootPath {
+                settings["INFOPLIST_FILE"] = .string(relativePath)
+            } else {
+                settings["INFOPLIST_FILE"] = .string("$(SRCROOT)/\(relativePath)")
+            }
         }
 
         if let entitlements = target.entitlements {
@@ -221,10 +228,6 @@ final class ConfigGenerator: ConfigGenerating {
         }
         settings["SDKROOT"] = .string(target.platform.xcodeSdkRoot)
         settings["SUPPORTED_PLATFORMS"] = .string(target.platform.xcodeSupportedPlatforms)
-
-        if settings["SWIFT_VERSION"] == nil {
-            settings["SWIFT_VERSION"] = .string(swiftVersion)
-        }
 
         if target.product == .staticFramework {
             settings["MACH_O_TYPE"] = "staticlib"

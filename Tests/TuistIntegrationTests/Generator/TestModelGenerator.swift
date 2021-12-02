@@ -13,6 +13,8 @@ final class TestModelGenerator {
         var projects: Int = 50
         var testTargets: Int = 3
         var frameworkTargets: Int = 3
+        var staticFrameworkTargets: Int = 3
+        var staticLibraryTargets: Int = 3
         var schemes: Int = 10
         var sources: Int = 100
         var resources: Int = 100
@@ -28,36 +30,38 @@ final class TestModelGenerator {
     }
 
     func generate() throws -> Graph {
-        let frameworkNodeLoader = MockFrameworkNodeLoader()
-        let libraryNodeLoader = MockLibraryNodeLoader()
-        let xcframeworkNodeLoader = MockXCFrameworkNodeLoader()
-        let modelLoader = try createModelLoader()
-
+        let models = try createModels()
         let graphLoader = GraphLoader(
-            modelLoader: modelLoader,
-            frameworkNodeLoader: frameworkNodeLoader,
-            xcframeworkNodeLoader: xcframeworkNodeLoader,
-            libraryNodeLoader: libraryNodeLoader
+            frameworkMetadataProvider: MockFrameworkMetadataProvider(),
+            libraryMetadataProvider: MockLibraryMetadataProvider(),
+            xcframeworkMetadataProvider: MockXCFrameworkMetadataProvider(),
+            systemFrameworkMetadataProvider: SystemFrameworkMetadataProvider()
         )
 
-        return try graphLoader.loadWorkspace(path: rootPath)
+        return try graphLoader.loadWorkspace(
+            workspace: models.workspace,
+            projects: models.projects
+        )
     }
 
-    private func createModelLoader() throws -> GeneratorModelLoading {
-        let modelLoader = MockGeneratorModelLoader(basePath: rootPath)
-
-        let projects = try (0 ..< config.projects).map { try createProjectWithDependencies(name: "App\($0)") }
-        let workspace = try createWorkspace(path: rootPath, projects: projects.map(\.name))
-        projects.forEach { project in
-            modelLoader.mockProject(project.name) { _ in project }
+    private func createModels() throws -> WorkspaceWithProjects {
+        let projects = try (0 ..< config.projects).map {
+            try createProjectWithDependencies(name: "App\($0)")
         }
-
-        modelLoader.mockWorkspace { _ in workspace }
-        return modelLoader
+        let workspace = try createWorkspace(path: rootPath, projects: projects.map(\.name))
+        return WorkspaceWithProjects(workspace: workspace, projects: projects)
     }
 
     private func createProjectWithDependencies(name: String) throws -> Project {
-        let frameworksNames = (0 ..< config.frameworkTargets).map { "\(name)Framework\($0)" }
+        let frameworksNames = (0 ..< config.frameworkTargets).map {
+            "\(name)Framework\($0)"
+        }
+        let staticFrameworkNames = (0 ..< config.staticFrameworkTargets).map {
+            "\(name)StaticFramework\($0)"
+        }
+        let staticLibraryNames = (0 ..< config.staticLibraryTargets).map {
+            "\(name)Library\($0)"
+        }
         let unitTestsTargetNames = (0 ..< config.testTargets).map { "\(name)TestAppTests\($0)" }
         let targetSettings = Settings(
             base: ["A1": "A_VALUE",
@@ -79,8 +83,21 @@ final class TestModelGenerator {
         )
         let projectPath = pathTo(name)
         let dependencies = try createDependencies(relativeTo: projectPath)
-        let frameworkTargets = try frameworksNames.map { try createFrameworkTarget(name: $0, depenendencies: dependencies) }
-        let appTarget = createTarget(path: projectPath, name: "\(name)AppTarget", settings: targetSettings, dependencies: frameworksNames)
+        let frameworkTargets = try frameworksNames.map {
+            try createTarget(name: $0, product: .framework, dependencies: dependencies)
+        }
+        let staticFrameworkTargets = try staticFrameworkNames.map {
+            try createTarget(name: $0, product: .staticFramework)
+        }
+        let staticLibraryTargets = try staticLibraryNames.map {
+            try createTarget(name: $0, product: .staticLibrary)
+        }
+        let appTarget = createTarget(
+            path: projectPath,
+            name: "\(name)AppTarget",
+            settings: targetSettings,
+            dependencies: frameworksNames + staticFrameworkNames + staticLibraryNames
+        )
         let appUnitTestsTargets = unitTestsTargetNames.map { createTarget(
             path: projectPath,
             name: $0,
@@ -88,12 +105,16 @@ final class TestModelGenerator {
             settings: nil,
             dependencies: [appTarget.name]
         ) }
-        let schemes = try createSchemes(projectName: name, appTarget: appTarget, frameworkTargets: frameworkTargets)
+        let schemes = try createSchemes(
+            projectName: name,
+            appTarget: appTarget,
+            otherTargets: frameworkTargets + staticLibraryTargets + staticLibraryTargets
+        )
         let project = createProject(
             path: projectPath,
             name: name,
             settings: projectSettings,
-            targets: [appTarget] + frameworkTargets + appUnitTestsTargets,
+            targets: [appTarget] + frameworkTargets + staticFrameworkTargets + staticLibraryTargets + appUnitTestsTargets,
             schemes: schemes
         )
 
@@ -117,13 +138,16 @@ final class TestModelGenerator {
             name: name,
             organizationName: nil,
             developmentRegion: nil,
+            options: [],
             settings: settings,
             filesGroup: .group(name: "Project"),
             targets: targets,
             packages: packages,
             schemes: schemes,
             ideTemplateMacros: nil,
-            additionalFiles: createAdditionalFiles(path: path)
+            additionalFiles: createAdditionalFiles(path: path),
+            resourceSynthesizers: [],
+            lastUpgradeCheck: nil
         )
     }
 
@@ -206,19 +230,21 @@ final class TestModelGenerator {
         return (filesWithFolderPaths + folderReferences).shuffled()
     }
 
-    private func createFrameworkTarget(name: String,
-                                       depenendencies: [TargetDependency] = []) throws -> Target
-    {
+    private func createTarget(
+        name: String,
+        product: Product,
+        dependencies: [TargetDependency] = []
+    ) throws -> Target {
         Target(
             name: name,
             platform: .iOS,
-            product: .framework,
-            productName: name,
+            product: product,
+            productName: nil,
             bundleId: "test.bundle.\(name)",
             settings: nil,
             sources: [],
             filesGroup: .group(name: "ProjectGroup"),
-            dependencies: depenendencies
+            dependencies: dependencies
         )
     }
 
@@ -253,8 +279,8 @@ final class TestModelGenerator {
         return libraries
     }
 
-    private func createSchemes(projectName: String, appTarget: Target, frameworkTargets: [Target]) throws -> [Scheme] {
-        let targets = ([appTarget] + frameworkTargets).map { targetReference(from: $0, projectName: projectName) }
+    private func createSchemes(projectName: String, appTarget: Target, otherTargets: [Target]) throws -> [Scheme] {
+        let targets = ([appTarget] + otherTargets).map { targetReference(from: $0, projectName: projectName) }
         return (0 ..< config.schemes).map {
             let boolStub = $0 % 2 == 0
 
@@ -272,6 +298,7 @@ final class TestModelGenerator {
                     configurationName: "Debug",
                     coverage: boolStub,
                     codeCoverageTargets: targets,
+                    expandVariableFromTarget: nil,
                     preActions: createExecutionActions(),
                     postActions: createExecutionActions(),
                     diagnosticsOptions: Set()

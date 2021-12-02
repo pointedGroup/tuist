@@ -122,17 +122,28 @@ extension String {
         return ([first] + rest).joined(separator: "")
     }
 
-    public func camelCaseToSnakeCase() -> String {
-        let acronymPattern = "([A-Z]+)([A-Z][a-z]|[0-9])"
-        let normalPattern = "([a-z0-9])([A-Z])"
-        return processCamalCaseRegex(pattern: acronymPattern)?
-            .processCamalCaseRegex(pattern: normalPattern)?.lowercased() ?? lowercased()
+    public func camelCaseToKebabCase() -> String {
+        convertCamelCase(separator: "-")
     }
 
-    fileprivate func processCamalCaseRegex(pattern: String) -> String? {
+    public func camelCaseToSnakeCase() -> String {
+        convertCamelCase(separator: "_")
+    }
+
+    private func convertCamelCase(separator: String) -> String {
+        let acronymPattern = "([A-Z]+)([A-Z][a-z]|[0-9])"
+        let normalPattern = "([a-z0-9])([A-Z])"
+        return processCamelCaseRegex(pattern: acronymPattern, separator: separator)?
+            .processCamelCaseRegex(pattern: normalPattern, separator: separator)?.lowercased() ?? lowercased()
+    }
+
+    private func processCamelCaseRegex(
+        pattern: String,
+        separator: String
+    ) -> String? {
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
         let range = NSRange(location: 0, length: count)
-        return regex?.stringByReplacingMatches(in: self, options: [], range: range, withTemplate: "$1_$2")
+        return regex?.stringByReplacingMatches(in: self, options: [], range: range, withTemplate: "$1\(separator)$2")
     }
 
     // MARK: - Shell
@@ -144,7 +155,7 @@ extension String {
     /// - Returns: Shell escaped string.
     func shellEscaped() -> String {
         // If all the characters in the string are in whitelist then no need to escape.
-        guard let pos = utf8.firstIndex(where: { !inShellWhitelist($0) }) else {
+        guard let pos = utf8.firstIndex(where: { mustBeEscaped($0) }) else {
             return self
         }
 
@@ -174,7 +185,7 @@ extension String {
         self = shellEscaped()
     }
 
-    private func inShellWhitelist(_ codeUnit: UInt8) -> Bool {
+    private func mustBeEscaped(_ codeUnit: UInt8) -> Bool {
         switch codeUnit {
         case UInt8(ascii: "a") ... UInt8(ascii: "z"),
              UInt8(ascii: "A") ... UInt8(ascii: "Z"),
@@ -189,9 +200,9 @@ extension String {
              UInt8(ascii: "="),
              UInt8(ascii: "."),
              UInt8(ascii: ","):
-            return true
-        default:
             return false
+        default:
+            return true
         }
     }
 }

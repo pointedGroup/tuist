@@ -91,32 +91,31 @@ final class LinkGenerator: LinkGenerating {
                        sourceRootPath: AbsolutePath,
                        graphTraverser: GraphTraversing) throws
     {
-        let embeddableFrameworks = graphTraverser.embeddableFrameworks(path: path, name: target.name).sorted()
-        let linkableModules = try graphTraverser.linkableDependencies(path: path, name: target.name).sorted()
-
         try setupSearchAndIncludePaths(
             target: target,
             pbxTarget: pbxTarget,
             sourceRootPath: sourceRootPath,
             path: path,
-            graphTraverser: graphTraverser,
-            linkableModules: linkableModules
+            graphTraverser: graphTraverser
         )
 
         try generateEmbedPhase(
-            dependencies: embeddableFrameworks,
             target: target,
             pbxTarget: pbxTarget,
             pbxproj: pbxproj,
             fileElements: fileElements,
-            sourceRootPath: sourceRootPath
+            sourceRootPath: sourceRootPath,
+            path: path,
+            graphTraverser: graphTraverser
         )
 
         try generateLinkingPhase(
-            dependencies: linkableModules,
+            target: target,
             pbxTarget: pbxTarget,
             pbxproj: pbxproj,
-            fileElements: fileElements
+            fileElements: fileElements,
+            path: path,
+            graphTraverser: graphTraverser
         )
 
         try generateCopyProductsBuildPhase(
@@ -135,46 +134,51 @@ final class LinkGenerator: LinkGenerating {
         )
     }
 
-    private func setupSearchAndIncludePaths(target: Target,
-                                            pbxTarget: PBXTarget,
-                                            sourceRootPath: AbsolutePath,
-                                            path: AbsolutePath,
-                                            graphTraverser: GraphTraversing,
-                                            linkableModules: [GraphDependencyReference]) throws
-    {
-        let headersSearchPaths = graphTraverser.librariesPublicHeadersFolders(path: path, name: target.name).sorted()
-        let librarySearchPaths = graphTraverser.librariesSearchPaths(path: path, name: target.name).sorted()
-        let swiftIncludePaths = graphTraverser.librariesSwiftIncludePaths(path: path, name: target.name).sorted()
-        let runPathSearchPaths = graphTraverser.runPathSearchPaths(path: path, name: target.name).sorted()
-
+    private func setupSearchAndIncludePaths(
+        target: Target,
+        pbxTarget: PBXTarget,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
         try setupFrameworkSearchPath(
-            dependencies: linkableModules,
+            target: target,
             pbxTarget: pbxTarget,
-            sourceRootPath: sourceRootPath
+            sourceRootPath: sourceRootPath,
+            path: path,
+            graphTraverser: graphTraverser
         )
 
         try setupHeadersSearchPath(
-            headersSearchPaths,
+            target: target,
             pbxTarget: pbxTarget,
-            sourceRootPath: sourceRootPath
+            sourceRootPath: sourceRootPath,
+            path: path,
+            graphTraverser: graphTraverser
         )
 
         try setupLibrarySearchPaths(
-            librarySearchPaths,
+            target: target,
             pbxTarget: pbxTarget,
-            sourceRootPath: sourceRootPath
+            sourceRootPath: sourceRootPath,
+            path: path,
+            graphTraverser: graphTraverser
         )
 
         try setupSwiftIncludePaths(
-            swiftIncludePaths,
+            target: target,
             pbxTarget: pbxTarget,
-            sourceRootPath: sourceRootPath
+            sourceRootPath: sourceRootPath,
+            path: path,
+            graphTraverser: graphTraverser
         )
 
         try setupRunPathSearchPaths(
-            runPathSearchPaths,
+            target: target,
             pbxTarget: pbxTarget,
-            sourceRootPath: sourceRootPath
+            sourceRootPath: sourceRootPath,
+            path: path,
+            graphTraverser: graphTraverser
         )
     }
 
@@ -192,34 +196,30 @@ final class LinkGenerator: LinkGenerating {
         }
     }
 
-    func generateEmbedPhase(dependencies: [GraphDependencyReference],
-                            target: Target,
-                            pbxTarget: PBXTarget,
-                            pbxproj: PBXProj,
-                            fileElements: ProjectFileElements,
-                            sourceRootPath: AbsolutePath) throws
-    {
-        let precompiledEmbedPhase = PBXShellScriptBuildPhase(name: "Embed Precompiled Frameworks")
+    // swiftlint:disable:next function_body_length
+    func generateEmbedPhase(
+        target: Target,
+        pbxTarget: PBXTarget,
+        pbxproj: PBXProj,
+        fileElements: ProjectFileElements,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let embeddableFrameworks = graphTraverser.embeddableFrameworks(path: path, name: target.name).sorted()
+
         let embedPhase = PBXCopyFilesBuildPhase(
             dstPath: "",
             dstSubfolderSpec: .frameworks,
             name: "Embed Frameworks"
         )
-        pbxproj.add(object: precompiledEmbedPhase)
-        pbxproj.add(object: embedPhase)
-
-        pbxTarget.buildPhases.append(precompiledEmbedPhase)
-        pbxTarget.buildPhases.append(embedPhase)
 
         var frameworkReferences: [GraphDependencyReference] = []
 
-        try dependencies.forEach { dependency in
+        try embeddableFrameworks.forEach { dependency in
             switch dependency {
             case .framework:
                 frameworkReferences.append(dependency)
-            case .library:
-                // Do nothing
-                break
             case let .xcframework(path, _, _, _):
                 guard let fileRef = fileElements.file(path: path) else {
                     throw LinkGeneratorError.missingReference(path: path)
@@ -230,10 +230,7 @@ final class LinkGenerator: LinkGenerating {
                 )
                 pbxproj.add(object: buildFile)
                 embedPhase.files?.append(buildFile)
-            case .sdk:
-                // Do nothing
-                break
-            case let .product(target, _):
+            case let .product(target, _, platformFilter):
                 guard let fileRef = fileElements.product(target: target) else {
                     throw LinkGeneratorError.missingProduct(name: target)
                 }
@@ -241,14 +238,18 @@ final class LinkGenerator: LinkGenerating {
                     file: fileRef,
                     settings: ["ATTRIBUTES": ["CodeSignOnCopy", "RemoveHeadersOnCopy"]]
                 )
+                buildFile.platformFilter = platformFilter?.xcodeprojValue
                 pbxproj.add(object: buildFile)
                 embedPhase.files?.append(buildFile)
+            case .library, .bundle, .sdk:
+                // Do nothing
+                break
             }
         }
 
-        if frameworkReferences.isEmpty {
-            precompiledEmbedPhase.shellScript = "echo \"Skipping, nothing to be embedded.\""
-        } else {
+        if !frameworkReferences.isEmpty {
+            let precompiledEmbedPhase = PBXShellScriptBuildPhase(name: "Embed Precompiled Frameworks")
+
             let script = try embedScriptGenerator.script(
                 sourceRootPath: sourceRootPath,
                 frameworkReferences: frameworkReferences,
@@ -259,16 +260,27 @@ final class LinkGenerator: LinkGenerating {
             precompiledEmbedPhase.inputPaths = script.inputPaths
                 .map { "$(SRCROOT)/\($0.pathString)" }
             precompiledEmbedPhase.outputPaths = script.outputPaths
+
+            pbxproj.add(object: precompiledEmbedPhase)
+            pbxTarget.buildPhases.append(precompiledEmbedPhase)
         }
+
+        pbxproj.add(object: embedPhase)
+        pbxTarget.buildPhases.append(embedPhase)
     }
 
-    func setupFrameworkSearchPath(dependencies: [GraphDependencyReference],
-                                  pbxTarget: PBXTarget,
-                                  sourceRootPath: AbsolutePath) throws
-    {
-        let precompiledPaths = dependencies.compactMap(\.precompiledPath)
+    func setupFrameworkSearchPath(
+        target: Target,
+        pbxTarget: PBXTarget,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let linkableModules = try graphTraverser.searchablePathDependencies(path: path, name: target.name).sorted()
+
+        let precompiledPaths = linkableModules.compactMap(\.precompiledPath)
             .map { LinkGeneratorPath.absolutePath($0.removingLastComponent()) }
-        let sdkPaths = dependencies.compactMap { (dependency: GraphDependencyReference) -> LinkGeneratorPath? in
+        let sdkPaths = linkableModules.compactMap { (dependency: GraphDependencyReference) -> LinkGeneratorPath? in
             if case let GraphDependencyReference.sdk(_, _, source) = dependency {
                 return source.frameworkSearchPath.map { LinkGeneratorPath.string($0) }
             } else {
@@ -285,49 +297,65 @@ final class LinkGenerator: LinkGenerating {
         )
     }
 
-    func setupHeadersSearchPath(_ paths: [AbsolutePath],
-                                pbxTarget: PBXTarget,
-                                sourceRootPath: AbsolutePath) throws
-    {
+    func setupHeadersSearchPath(
+        target: Target,
+        pbxTarget: PBXTarget,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let headersSearchPaths = graphTraverser.librariesPublicHeadersFolders(path: path, name: target.name).sorted()
         try setup(
             setting: "HEADER_SEARCH_PATHS",
-            paths: paths.map(LinkGeneratorPath.absolutePath),
+            paths: headersSearchPaths.map(LinkGeneratorPath.absolutePath),
             pbxTarget: pbxTarget,
             sourceRootPath: sourceRootPath
         )
     }
 
-    func setupLibrarySearchPaths(_ paths: [AbsolutePath],
-                                 pbxTarget: PBXTarget,
-                                 sourceRootPath: AbsolutePath) throws
-    {
+    func setupLibrarySearchPaths(
+        target: Target,
+        pbxTarget: PBXTarget,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let librarySearchPaths = graphTraverser.librariesSearchPaths(path: path, name: target.name).sorted()
         try setup(
             setting: "LIBRARY_SEARCH_PATHS",
-            paths: paths.map(LinkGeneratorPath.absolutePath),
+            paths: librarySearchPaths.map(LinkGeneratorPath.absolutePath),
             pbxTarget: pbxTarget,
             sourceRootPath: sourceRootPath
         )
     }
 
-    func setupSwiftIncludePaths(_ paths: [AbsolutePath],
-                                pbxTarget: PBXTarget,
-                                sourceRootPath: AbsolutePath) throws
-    {
+    func setupSwiftIncludePaths(
+        target: Target,
+        pbxTarget: PBXTarget,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let swiftIncludePaths = graphTraverser.librariesSwiftIncludePaths(path: path, name: target.name).sorted()
         try setup(
             setting: "SWIFT_INCLUDE_PATHS",
-            paths: paths.map(LinkGeneratorPath.absolutePath),
+            paths: swiftIncludePaths.map(LinkGeneratorPath.absolutePath),
             pbxTarget: pbxTarget,
             sourceRootPath: sourceRootPath
         )
     }
 
-    func setupRunPathSearchPaths(_ paths: [AbsolutePath],
-                                 pbxTarget: PBXTarget,
-                                 sourceRootPath: AbsolutePath) throws
-    {
+    func setupRunPathSearchPaths(
+        target: Target,
+        pbxTarget: PBXTarget,
+        sourceRootPath: AbsolutePath,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let runPathSearchPaths = graphTraverser.runPathSearchPaths(path: path, name: target.name).sorted()
         try setup(
             setting: "LD_RUNPATH_SEARCH_PATHS",
-            paths: paths.map(LinkGeneratorPath.absolutePath),
+            paths: runPathSearchPaths.map(LinkGeneratorPath.absolutePath),
             pbxTarget: pbxTarget,
             sourceRootPath: sourceRootPath
         )
@@ -353,11 +381,16 @@ final class LinkGenerator: LinkGenerating {
         }
     }
 
-    func generateLinkingPhase(dependencies: [GraphDependencyReference],
-                              pbxTarget: PBXTarget,
-                              pbxproj: PBXProj,
-                              fileElements: ProjectFileElements) throws
-    {
+    func generateLinkingPhase(
+        target: Target,
+        pbxTarget: PBXTarget,
+        pbxproj: PBXProj,
+        fileElements: ProjectFileElements,
+        path: AbsolutePath,
+        graphTraverser: GraphTraversing
+    ) throws {
+        let linkableDependencies = try graphTraverser.linkableDependencies(path: path, name: target.name).sorted()
+
         let buildPhase = PBXFrameworksBuildPhase()
         pbxproj.add(object: buildPhase)
         pbxTarget.buildPhases.append(buildPhase)
@@ -371,8 +404,7 @@ final class LinkGenerator: LinkGenerating {
             buildPhase.files?.append(buildFile)
         }
 
-        try dependencies
-            .sorted()
+        try linkableDependencies
             .forEach { dependency in
                 switch dependency {
                 case let .framework(path, _, _, _, _, _, _, _):
@@ -381,11 +413,14 @@ final class LinkGenerator: LinkGenerating {
                     try addBuildFile(path)
                 case let .xcframework(path, _, _, _):
                     try addBuildFile(path)
-                case let .product(target, _):
+                case .bundle:
+                    break
+                case let .product(target, _, platformFilter):
                     guard let fileRef = fileElements.product(target: target) else {
                         throw LinkGeneratorError.missingProduct(name: target)
                     }
                     let buildFile = PBXBuildFile(file: fileRef)
+                    buildFile.platformFilter = platformFilter?.xcodeprojValue
                     pbxproj.add(object: buildFile)
                     buildPhase.files?.append(buildFile)
                 case let .sdk(sdkPath, sdkStatus, _):
@@ -440,12 +475,13 @@ final class LinkGenerator: LinkGenerating {
     {
         var files: [PBXBuildFile] = []
 
-        for case let .product(target, _) in dependencies.sorted() {
+        for case let .product(target, _, platformFilter) in dependencies.sorted() {
             guard let fileRef = fileElements.product(target: target) else {
                 throw LinkGeneratorError.missingProduct(name: target)
             }
 
             let buildFile = PBXBuildFile(file: fileRef)
+            buildFile.platformFilter = platformFilter?.xcodeprojValue
             pbxproj.add(object: buildFile)
             files.append(buildFile)
         }

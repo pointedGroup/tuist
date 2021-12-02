@@ -6,44 +6,131 @@ on:
       - main
   pull_request:
     paths:
+      - Tuist/**
+      - Package.resolved
       - Gemfile*
       - Package.swift
-      - Package.resolved
+      - Project.swift
       - Sources/**
       - Tests/**
-      - features/**
+      - projects/tuist/features/**
+      - projects/tuist/fixtures/**
+      - .github/workflows/meta-tuist.yml
+      - .package.resolved
+      - projects/fourier/**
+
+concurrency:
+  group: meta-tuist-${{ github.head_ref }}
+  cancel-in-progress: true
 
 env:
-  RUBY_VERSION: '2.7.2'
+  RUBY_VERSION: '3.0.2'
   TUIST_STATS_OPT_OUT: true
 
 jobs:
   build:
     name: Build with Xcode ${{ matrix.xcode }}
-    runs-on: macos-latest
+    runs-on: macOS-11
     strategy:
       matrix:
-        xcode: ['11.5', '12.3']
+        xcode: ['13.0']
     steps:
       - uses: actions/checkout@v1
       - name: Select Xcode
         run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
-      - uses: actions/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ env.RUBY_VERSION }}
       - uses: actions/cache@v2
         with:
           path: vendor/bundle
-          key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-${{ hashFiles('**/Gemfile.lock') }}
           restore-keys: |
-            ${{ runner.os }}-gems-
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
       - name: Bundle install
         run: |
           bundle config path vendor/bundle
           bundle install --jobs 4 --retry 3
-      - name: Generate Xcode project
-        run: |
-          ./bin/fourier generate tuist
       - name: Build
         run: |
-          ./bin/fourier build all
+          ./fourier build tuist all
+  generate:
+    name: Generate with Xcode ${{ matrix.xcode }}
+    runs-on: macOS-11
+    strategy:
+      matrix:
+        xcode: ['13.0']
+    steps:
+      - uses: actions/checkout@v1
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
+      - name: Build
+        run: |
+          ./fourier focus
+  test:
+    name: Test with Xcode ${{ matrix.xcode }}
+    runs-on: macOS-11
+    strategy:
+      matrix:
+        xcode: ['13.0']
+    steps:
+      - uses: actions/checkout@v1
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
+      - name: Test
+        run: |
+          ./fourier test tuist unit
+  
+  lint-lockfiles:
+    name: Lint lockfiles
+    runs-on: macOS-11
+    strategy:
+      matrix:
+        xcode: ['13.0']
+    steps:
+      - uses: actions/checkout@v1
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+      - uses: actions/cache@v2
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-${{ env.RUBY_VERSION }}${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUBY_VERSION }}-gems-
+      - name: Bundle install
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
+      - name: Install Bundler dependencies
+        run: bundle install
+      - name: Run
+        run: ./fourier lint lockfiles

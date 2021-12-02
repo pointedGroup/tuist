@@ -19,9 +19,6 @@ public final class MockManifestLoader: ManifestLoading {
     public var manifestPathCount: UInt = 0
     public var manifestPathStub: ((AbsolutePath, Manifest) throws -> AbsolutePath)?
 
-    public var loadSetupCount: UInt = 0
-    public var loadSetupStub: ((AbsolutePath) throws -> [Upping])?
-
     public var loadConfigCount: UInt = 0
     public var loadConfigStub: ((AbsolutePath) throws -> Config)?
 
@@ -54,11 +51,6 @@ public final class MockManifestLoader: ManifestLoading {
         return try manifestPathStub?(path, manifest) ?? TemporaryDirectory(removeTreeOnDeinit: true).path
     }
 
-    public func loadSetup(at path: AbsolutePath) throws -> [Upping] {
-        loadSetupCount += 1
-        return try loadSetupStub?(path) ?? []
-    }
-
     public func loadConfig(at path: AbsolutePath) throws -> Config {
         loadConfigCount += 1
         return try loadConfigStub?(path) ?? Config.test()
@@ -79,5 +71,10 @@ public final class MockManifestLoader: ManifestLoading {
         return try loadPluginStub?(path) ?? Plugin.test()
     }
 
-    public func register(plugins _: Plugins) {}
+    public var taskLoadArgumentsStub: ((AbsolutePath) throws -> [String])?
+    public func taskLoadArguments(at path: AbsolutePath) throws -> [String] {
+        try taskLoadArgumentsStub?(path) ?? []
+    }
+
+    public func register(plugins _: Plugins) throws {}
 }

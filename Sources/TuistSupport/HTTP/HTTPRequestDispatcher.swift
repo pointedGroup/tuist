@@ -1,3 +1,5 @@
+import Combine
+import CombineExt
 import Foundation
 import RxSwift
 
@@ -29,10 +31,20 @@ public enum HTTPRequestDispatcherError: LocalizedError, FatalError {
             }
         case .invalidResponse: return "Received unexpected response from the network."
         case let .serverSideError(error, response):
+            let url: URL = response.url!
             if let error = error as? LocalizedError {
-                return "Error returned by the server, code \(response.statusCode): \(error.localizedDescription)"
+                return """
+                Error returned by the server:
+                  - URL: \(url.absoluteString)
+                  - Code: \(response.statusCode)
+                  - Description: \(error.localizedDescription)
+                """
             } else {
-                return "Error returned by the server, code: \(response.statusCode)."
+                return """
+                Error returned by the server:
+                  - URL: \(url.absoluteString)
+                  - Code: \(response.statusCode)
+                """
             }
         }
     }
@@ -49,6 +61,7 @@ public enum HTTPRequestDispatcherError: LocalizedError, FatalError {
 
 public protocol HTTPRequestDispatching {
     func dispatch<T, E: Error>(resource: HTTPResource<T, E>) -> Single<(object: T, response: HTTPURLResponse)>
+    func dispatch<T, E: Error>(resource: HTTPResource<T, E>) -> AnyPublisher<(object: T, response: HTTPURLResponse), Error>
 }
 
 public final class HTTPRequestDispatcher: HTTPRequestDispatching {
@@ -88,6 +101,21 @@ public final class HTTPRequestDispatcher: HTTPRequestDispatching {
 
             return Disposables.create {
                 task.cancel()
+            }
+        }
+    }
+
+    public func dispatch<T, E>(resource: HTTPResource<T, E>) -> AnyPublisher<(object: T, response: HTTPURLResponse), Error> where E: Error {
+        return AnyPublisher.create { subscriber in
+            let disposable = self.dispatch(resource: resource)
+                .subscribe(onSuccess: { value in
+                    subscriber.send(value)
+                    subscriber.send(completion: .finished)
+                }, onError: { error in
+                    subscriber.send(completion: .failure(error))
+                })
+            return AnyCancellable {
+                disposable.dispose()
             }
         }
     }

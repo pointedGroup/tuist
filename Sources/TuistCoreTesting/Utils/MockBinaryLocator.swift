@@ -3,12 +3,10 @@ import TSCBasic
 @testable import TuistCore
 
 public final class MockBinaryLocator: BinaryLocating {
-    var invokedSwiftLintPath = false
-    var invokedSwiftLintPathCount = 0
-    var stubbedSwiftLintPathError: Error?
-    var stubbedSwiftLintPathResult: AbsolutePath!
-
-    public init() {}
+    public var invokedSwiftLintPath = false
+    public var invokedSwiftLintPathCount = 0
+    public var stubbedSwiftLintPathError: Error?
+    public var stubbedSwiftLintPathResult: AbsolutePath!
 
     public func swiftLintPath() throws -> AbsolutePath {
         invokedSwiftLintPath = true
@@ -19,21 +17,32 @@ public final class MockBinaryLocator: BinaryLocating {
         return stubbedSwiftLintPathResult
     }
 
-    public var swiftDocPathStub: (() throws -> AbsolutePath)?
-    public func swiftDocPath() throws -> AbsolutePath {
-        if let swiftDocPathStub = swiftDocPathStub {
-            return try swiftDocPathStub()
-        } else {
-            throw BinaryLocatorError.swiftDocNotFound
+    public var xcbeautifyStub: (() throws -> AbsolutePath)?
+    public var invokedXcbeautifyPath = false
+    public var invokedXcbeautifyPathCount = 0
+    public var stubbedXcbeautifyPathError: Error?
+    public var stubbedXcbeautifyPathResult: AbsolutePath!
+
+    public func xcbeautifyPath() throws -> AbsolutePath {
+        invokedXcbeautifyPath = true
+        invokedXcbeautifyPathCount += 1
+        if let error = stubbedXcbeautifyPathError {
+            throw error
         }
+        return stubbedXcbeautifyPathResult
     }
 
-    public var xcbeautifyStub: (() throws -> AbsolutePath)?
-    public func xcbeautifyPath() throws -> AbsolutePath {
-        if let xcbeautifyPath = xcbeautifyStub {
-            return try xcbeautifyPath()
-        } else {
-            throw BinaryLocatorError.xcbeautifyNotFound
+    public var invokedCocoapodsInteractorPath = false
+    public var invokedCocoapodsInteractorPathCount = 0
+    public var stubbedCocoapodsInteractorPathError: Error?
+    public var stubbedCocoapodsInteractorPathResult: AbsolutePath!
+
+    public func cocoapodsInteractorPath() throws -> AbsolutePath {
+        invokedCocoapodsInteractorPath = true
+        invokedCocoapodsInteractorPathCount += 1
+        if let error = stubbedCocoapodsInteractorPathError {
+            throw error
         }
+        return stubbedCocoapodsInteractorPathResult
     }
 }

@@ -16,11 +16,13 @@ import XCTest
 final class TestServiceTests: TuistUnitTestCase {
     private var subject: TestService!
     private var generator: MockGenerator!
-    private var testServiceGeneratorFactory: MockTestServiceGeneratorFactory!
+    private var generatorFactory: MockGeneratorFactory!
     private var xcodebuildController: MockXcodeBuildController!
     private var buildGraphInspector: MockBuildGraphInspector!
     private var simulatorController: MockSimulatorController!
+    private var contentHasher: MockContentHasher!
     private var testsCacheTemporaryDirectory: TemporaryDirectory!
+    private var cacheDirectoriesProvider: MockCacheDirectoriesProvider!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -28,19 +30,25 @@ final class TestServiceTests: TuistUnitTestCase {
         xcodebuildController = .init()
         buildGraphInspector = .init()
         simulatorController = .init()
+        contentHasher = .init()
         testsCacheTemporaryDirectory = try TemporaryDirectory(removeTreeOnDeinit: true)
-        testServiceGeneratorFactory = .init()
-        testServiceGeneratorFactory.generatorStub = { _, _ in
-            self.generator
+        generatorFactory = .init()
+        generatorFactory.stubbedTestResult = generator
+        let mockCacheDirectoriesProvider = try MockCacheDirectoriesProvider()
+        cacheDirectoriesProvider = mockCacheDirectoriesProvider
+
+        contentHasher.hashStub = { _ in
+            "hash"
         }
 
         subject = TestService(
-            temporaryDirectory: try TemporaryDirectory(removeTreeOnDeinit: true),
             testsCacheTemporaryDirectory: testsCacheTemporaryDirectory,
-            testServiceGeneratorFactory: testServiceGeneratorFactory,
+            generatorFactory: generatorFactory,
             xcodebuildController: xcodebuildController,
             buildGraphInspector: buildGraphInspector,
-            simulatorController: simulatorController
+            simulatorController: simulatorController,
+            contentHasher: contentHasher,
+            cacheDirectoryProviderFactory: MockCacheDirectoriesProviderFactory(provider: mockCacheDirectoriesProvider)
         )
     }
 
@@ -50,9 +58,29 @@ final class TestServiceTests: TuistUnitTestCase {
         buildGraphInspector = nil
         simulatorController = nil
         testsCacheTemporaryDirectory = nil
-        testServiceGeneratorFactory = nil
+        generatorFactory = nil
+        contentHasher = nil
         subject = nil
         super.tearDown()
+    }
+
+    func test_run_uses_project_directory() throws {
+        // Given
+        contentHasher.hashStub = {
+            "\($0.replacingOccurrences(of: "/", with: ""))-hash"
+        }
+
+        // When
+        try? subject.testRun(
+            path: AbsolutePath("/test")
+        )
+
+        // Then
+        let gotPath = generatorFactory.invokedTestParametersList.first?.automationPath
+        XCTAssertEqual(
+            gotPath,
+            cacheDirectoriesProvider.cacheDirectory(for: .generatedAutomationProjects).appending(component: "test-hash")
+        )
     }
 
     func test_run_generates_project() throws {
@@ -85,7 +113,7 @@ final class TestServiceTests: TuistUnitTestCase {
             ]
         }
         buildGraphInspector.testableTargetStub = { scheme, _ in
-            ValueGraphTarget.test(
+            GraphTarget.test(
                 target: Target.test(
                     name: scheme.name
                 )
@@ -95,7 +123,7 @@ final class TestServiceTests: TuistUnitTestCase {
             (path, Graph.test())
         }
         var testedSchemes: [String] = []
-        xcodebuildController.testStub = { _, scheme, _, _, _, _ in
+        xcodebuildController.testStub = { _, scheme, _, _, _, _, _ in
             testedSchemes.append(scheme)
             return .just(.standardOutput(.init(raw: "success")))
         }
@@ -127,7 +155,7 @@ final class TestServiceTests: TuistUnitTestCase {
             (path, Graph.test())
         }
         var testedSchemes: [String] = []
-        xcodebuildController.testStub = { _, scheme, _, _, _, _ in
+        xcodebuildController.testStub = { _, scheme, _, _, _, _, _ in
             testedSchemes.append(scheme)
             return .just(.standardOutput(.init(raw: "success")))
         }
@@ -152,10 +180,10 @@ final class TestServiceTests: TuistUnitTestCase {
             ]
         )
         XCTAssertTrue(
-            fileHandler.exists(environment.testsCacheDirectory.appending(component: "A"))
+            fileHandler.exists(cacheDirectoriesProvider.cacheDirectory(for: .tests).appending(component: "A"))
         )
         XCTAssertTrue(
-            fileHandler.exists(environment.testsCacheDirectory.appending(component: "B"))
+            fileHandler.exists(cacheDirectoriesProvider.cacheDirectory(for: .tests).appending(component: "B"))
         )
     }
 
@@ -170,7 +198,7 @@ final class TestServiceTests: TuistUnitTestCase {
             (path, Graph.test())
         }
         var testedSchemes: [String] = []
-        xcodebuildController.testStub = { _, scheme, _, _, _, _ in
+        xcodebuildController.testStub = { _, scheme, _, _, _, _, _ in
             testedSchemes.append(scheme)
             return .error(NSError.test())
         }
@@ -192,7 +220,7 @@ final class TestServiceTests: TuistUnitTestCase {
             ]
         )
         XCTAssertFalse(
-            fileHandler.exists(environment.testsCacheDirectory.appending(component: "A"))
+            fileHandler.exists(cacheDirectoriesProvider.cacheDirectory(for: .tests).appending(component: "A"))
         )
     }
 
@@ -205,7 +233,7 @@ final class TestServiceTests: TuistUnitTestCase {
             (path, Graph.test())
         }
         var testedSchemes: [String] = []
-        xcodebuildController.testStub = { _, scheme, _, _, _, _ in
+        xcodebuildController.testStub = { _, scheme, _, _, _, _, _ in
             testedSchemes.append(scheme)
             return .just(.standardOutput(.init(raw: "success")))
         }
@@ -219,6 +247,70 @@ final class TestServiceTests: TuistUnitTestCase {
         XCTAssertEmpty(testedSchemes)
         XCTAssertPrinterOutputContains("There are no tests to run, finishing early")
     }
+
+    func test_run_uses_resource_bundle_path() throws {
+        // Given
+        let expectedResourceBundlePath = AbsolutePath("/test")
+        var resourceBundlePath: AbsolutePath?
+
+        xcodebuildController.testStub = { _, _, _, _, _, gotResourceBundlePath, _ in
+            resourceBundlePath = gotResourceBundlePath
+            return .empty()
+        }
+        generator.generateWithGraphStub = { path, _ in
+            (path, Graph.test())
+        }
+        buildGraphInspector.projectSchemesStub = { _ in
+            [
+                Scheme.test(name: "ProjectScheme"),
+            ]
+        }
+
+        // When
+        try subject.testRun(
+            path: try temporaryPath(),
+            resultBundlePath: expectedResourceBundlePath
+        )
+
+        // Then
+        XCTAssertEqual(
+            resourceBundlePath,
+            expectedResourceBundlePath
+        )
+    }
+
+    func test_run_uses_resource_bundle_path_with_given_scheme() throws {
+        // Given
+        let expectedResourceBundlePath = AbsolutePath("/test")
+        var resourceBundlePath: AbsolutePath?
+
+        xcodebuildController.testStub = { _, _, _, _, _, gotResourceBundlePath, _ in
+            resourceBundlePath = gotResourceBundlePath
+            return .empty()
+        }
+        generator.generateWithGraphStub = { path, _ in
+            (path, Graph.test())
+        }
+        buildGraphInspector.projectSchemesStub = { _ in
+            [
+                Scheme.test(name: "ProjectScheme"),
+                Scheme.test(name: "ProjectScheme2"),
+            ]
+        }
+
+        // When
+        try subject.testRun(
+            schemeName: "ProjectScheme2",
+            path: try temporaryPath(),
+            resultBundlePath: expectedResourceBundlePath
+        )
+
+        // Then
+        XCTAssertEqual(
+            resourceBundlePath,
+            expectedResourceBundlePath
+        )
+    }
 }
 
 // MARK: - Helpers
@@ -230,7 +322,9 @@ private extension TestService {
         configuration: String? = nil,
         path: AbsolutePath,
         deviceName: String? = nil,
-        osVersion: String? = nil
+        osVersion: String? = nil,
+        skipUiTests: Bool = false,
+        resultBundlePath: AbsolutePath? = nil
     ) throws {
         try run(
             schemeName: schemeName,
@@ -238,7 +332,9 @@ private extension TestService {
             configuration: configuration,
             path: path,
             deviceName: deviceName,
-            osVersion: osVersion
+            osVersion: osVersion,
+            skipUITests: skipUiTests,
+            resultBundlePath: resultBundlePath
         )
     }
 }

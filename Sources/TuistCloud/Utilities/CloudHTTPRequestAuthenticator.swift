@@ -2,7 +2,7 @@ import Foundation
 import TuistSupport
 
 /// Protocol that defines the interface to map HTTP requests and include authentication information.
-/// Depending on th environment where Tuist is running (local or CI), it returns the token from the credentials store (i.e. Keychain)
+/// Depending on the environment where Tuist is running (local or CI), it returns the token from the credentials store (i.e. Keychain)
 /// or a environment variable.
 public protocol CloudHTTPRequestAuthenticating {
     /// Given a request, it returns a copy of it including information to authenticate requests to the cloud.
@@ -46,11 +46,13 @@ public final class CloudHTTPRequestAuthenticator: CloudHTTPRequestAuthenticating
         urlComponents.queryItems = nil
         let serverURL = urlComponents.url!
 
+        let environment = environmentVariables()
+        let tokenFromEnvironment = environment[Constants.EnvironmentVariables.cloudToken]
         let token: String?
         if ciChecker.isCI() {
-            token = environmentVariables()[Constants.EnvironmentVariables.cloudToken]
+            token = tokenFromEnvironment
         } else {
-            token = try credentialsStore.read(serverURL: serverURL)?.token
+            token = try tokenFromEnvironment ?? credentialsStore.read(serverURL: serverURL)?.token
         }
 
         var request = request

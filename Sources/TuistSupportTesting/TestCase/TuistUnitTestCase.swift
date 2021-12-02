@@ -3,11 +3,12 @@ import XCTest
 
 @testable import TuistSupport
 
-public class TuistUnitTestCase: TuistTestCase {
+open class TuistUnitTestCase: TuistTestCase {
     public var system: MockSystem!
+    public var developerEnvironment: MockDeveloperEnvironment!
     public var xcodeController: MockXcodeController!
 
-    override public func setUp() {
+    override open func setUp() {
         super.setUp()
         // System
         system = MockSystem()
@@ -16,9 +17,13 @@ public class TuistUnitTestCase: TuistTestCase {
         // Xcode controller
         xcodeController = MockXcodeController()
         XcodeController.shared = xcodeController
+
+        // Developer environment
+        developerEnvironment = MockDeveloperEnvironment()
+        DeveloperEnvironment.shared = developerEnvironment
     }
 
-    override public func tearDown() {
+    override open func tearDown() {
         // System
         system = nil
         System.shared = System()
@@ -30,6 +35,10 @@ public class TuistUnitTestCase: TuistTestCase {
         // Environment
         environment = nil
         Environment.shared = Environment()
+
+        // Developer environment
+        developerEnvironment = nil
+        DeveloperEnvironment.shared = DeveloperEnvironment()
 
         super.tearDown()
     }

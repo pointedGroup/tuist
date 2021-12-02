@@ -6,8 +6,12 @@ import TuistCore
 public final class Cache: CacheStoring {
     // MARK: - Attributes
 
-    /// An instance that returns the storages to be used.
     private let storageProvider: CacheStorageProviding
+
+    /// An instance that returns the storages to be used.
+    private var storages: [CacheStoring] {
+        (try? storageProvider.storages()) ?? []
+    }
 
     // MARK: - Init
 
@@ -19,37 +23,30 @@ public final class Cache: CacheStoring {
 
     // MARK: - CacheStoring
 
-    public func exists(hash: String) -> Single<Bool> {
+    public func exists(name: String, hash: String) -> Single<Bool> {
         /// It calls exists sequentially until one of the storages returns true.
-        let storages = storageProvider.storages()
-        return storages.map { $0.exists(hash: hash) }.reduce(Single.just(false)) { (result, next) -> Single<Bool> in
+        return storages.reduce(Single.just(false)) { (result, next) -> Single<Bool> in
             result.flatMap { exists in
-                if exists {
-                    return Single.just(exists)
-                } else {
-                    return next
-                }
+                guard !exists else { return result }
+                return next.exists(name: name, hash: hash)
             }.catchError { (_) -> Single<Bool> in
-                next
+                next.exists(name: name, hash: hash)
             }
         }
     }
 
-    public func fetch(hash: String) -> Single<AbsolutePath> {
-        let storages = storageProvider.storages()
+    public func fetch(name: String, hash: String) -> Single<AbsolutePath> {
         return storages
-            .map { $0.fetch(hash: hash) }
             .reduce(nil) { (result, next) -> Single<AbsolutePath> in
                 if let result = result {
-                    return result.catchError { _ in next }
+                    return result.catchError { _ in next.fetch(name: name, hash: hash) }
                 } else {
-                    return next
+                    return next.fetch(name: name, hash: hash)
                 }
             }!
     }
 
-    public func store(hash: String, paths: [AbsolutePath]) -> Completable {
-        let storages = storageProvider.storages()
-        return Completable.zip(storages.map { $0.store(hash: hash, paths: paths) })
+    public func store(name: String, hash: String, paths: [AbsolutePath]) -> Completable {
+        return Completable.zip(storages.map { $0.store(name: name, hash: hash, paths: paths) })
     }
 }

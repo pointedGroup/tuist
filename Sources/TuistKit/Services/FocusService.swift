@@ -7,59 +7,37 @@ import TuistCore
 import TuistGenerator
 import TuistGraph
 import TuistLoader
+import TuistPlugin
 import TuistSupport
-
-protocol FocusServiceProjectGeneratorFactorying {
-    func generator(sources: Set<String>, xcframeworks: Bool, cacheProfile: TuistGraph.Cache.Profile, ignoreCache: Bool) -> Generating
-}
-
-final class FocusServiceProjectGeneratorFactory: FocusServiceProjectGeneratorFactorying {
-    init() {}
-
-    func generator(sources: Set<String>, xcframeworks: Bool, cacheProfile: TuistGraph.Cache.Profile, ignoreCache: Bool) -> Generating {
-        let contentHasher = CacheContentHasher()
-        let graphMapperProvider = FocusGraphMapperProvider(
-            contentHasher: contentHasher,
-            cache: !ignoreCache,
-            cacheSources: sources,
-            cacheProfile: cacheProfile,
-            cacheOutputType: xcframeworks ? .xcframework : .framework
-        )
-        let projectMapperProvider = ProjectMapperProvider(contentHasher: contentHasher)
-        return Generator(
-            projectMapperProvider: projectMapperProvider,
-            graphMapperProvider: graphMapperProvider,
-            workspaceMapperProvider: WorkspaceMapperProvider(contentHasher: contentHasher),
-            manifestLoaderFactory: ManifestLoaderFactory()
-        )
-    }
-}
 
 final class FocusService {
     private let opener: Opening
-    private let projectGeneratorFactory: FocusServiceProjectGeneratorFactorying
+    private let generatorFactory: GeneratorFactorying
     private let configLoader: ConfigLoading
+    private let manifestLoader: ManifestLoading
+    private let pluginService: PluginServicing
 
     init(
         configLoader: ConfigLoading = ConfigLoader(manifestLoader: ManifestLoader()),
+        manifestLoader: ManifestLoading = ManifestLoader(),
         opener: Opening = Opener(),
-        projectGeneratorFactory: FocusServiceProjectGeneratorFactorying = FocusServiceProjectGeneratorFactory()
+        generatorFactory: GeneratorFactorying = GeneratorFactory(),
+        pluginService: PluginServicing = PluginService()
     ) {
         self.configLoader = configLoader
+        self.manifestLoader = manifestLoader
         self.opener = opener
-        self.projectGeneratorFactory = projectGeneratorFactory
+        self.generatorFactory = generatorFactory
+        self.pluginService = pluginService
     }
 
     func run(path: String?, sources: Set<String>, noOpen: Bool, xcframeworks: Bool, profile: String?, ignoreCache: Bool) throws {
         let path = self.path(path)
         let config = try configLoader.loadConfig(path: path)
-
-        let cacheProfile = ignoreCache
-            ? CacheProfileResolver.defaultCacheProfileFromTuist
-            : try CacheProfileResolver().resolveCacheProfile(named: profile, from: config)
-
-        let generator = projectGeneratorFactory.generator(
-            sources: sources,
+        let cacheProfile = try CacheProfileResolver().resolveCacheProfile(named: profile, from: config)
+        let generator = generatorFactory.focus(
+            config: config,
+            sources: sources.isEmpty ? try projectTargets(at: path, config: config) : sources,
             xcframeworks: xcframeworks,
             cacheProfile: cacheProfile,
             ignoreCache: ignoreCache
@@ -78,5 +56,18 @@ final class FocusService {
         } else {
             return FileHandler.shared.currentPath
         }
+    }
+
+    private func projectTargets(at path: AbsolutePath, config: Config) throws -> Set<String> {
+        let plugins = try pluginService.loadPlugins(using: config)
+        try manifestLoader.register(plugins: plugins)
+        let projects: [AbsolutePath]
+        if let workspace = try? manifestLoader.loadWorkspace(at: path) {
+            projects = workspace.projects.map { AbsolutePath(path, .init($0.pathString)) }
+        } else {
+            projects = [path]
+        }
+
+        return try Set(projects.flatMap { try manifestLoader.loadProject(at: $0).targets.map(\.name) })
     }
 }

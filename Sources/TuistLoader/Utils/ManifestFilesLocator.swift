@@ -9,12 +9,26 @@ public protocol ManifestFilesLocating: AnyObject {
     func locateManifests(at locatingPath: AbsolutePath) -> [(Manifest, AbsolutePath)]
 
     /// It locates all plugin manifest files under the the root directory (as defined in `RootDirectoryLocator`).
-    /// - Parameter locatingPath: Directory for which the **plugin** manifest files will be obtained.
-    func locatePluginManifests(at locatingPath: AbsolutePath) -> [AbsolutePath]
+    /// - Parameters:
+    ///     - locatingPath: Directory for which the **plugin** manifest files will be obtained.
+    ///     - excluding: Relative glob patterns for excluded files.
+    ///     - onlyCurrentDirectory: If true, search for plugin manifests only in the directory of `locatingPath`
+    func locatePluginManifests(
+        at locatingPath: AbsolutePath,
+        excluding: [String],
+        onlyCurrentDirectory: Bool
+    ) -> [AbsolutePath]
 
     /// It locates all project and workspace manifest files under the root directory (as defined in `RootDirectoryLocator`).
-    /// - Parameter locatingPath: Directory for which the **project** and **workspace** manifest files will be obtained.
-    func locateProjectManifests(at locatingPath: AbsolutePath) -> [(Manifest, AbsolutePath)]
+    /// - Parameters:
+    ///     - locatingPath: Directory for which the **project** and **workspace** manifest files will be obtained.
+    ///     - excluding: Relative glob patterns for excluded files.
+    ///     - onlyCurrentDirectory: If true, search for manifests only in the directory of `locatingPath`
+    func locateProjectManifests(
+        at locatingPath: AbsolutePath,
+        excluding: [String],
+        onlyCurrentDirectory: Bool
+    ) -> [ManifestFilesLocator.ProjectManifest]
 
     /// It traverses up the directory hierarchy until it finds a `Config.swift` file.
     /// - Parameter locatingPath: Path from where to do the lookup.
@@ -23,10 +37,6 @@ public protocol ManifestFilesLocating: AnyObject {
     /// It traverses up the directory hierarchy until it finds a `Dependencies.swift` file.
     /// - Parameter locatingPath: Path from where to do the lookup.
     func locateDependencies(at locatingPath: AbsolutePath) -> AbsolutePath?
-
-    /// It traverses up the directory hierarchy until it finds a `Setup.swift` file.
-    /// - Parameter locatingPath: Path from where to do the lookup.
-    func locateSetup(at locatingPath: AbsolutePath) -> AbsolutePath?
 }
 
 public final class ManifestFilesLocator: ManifestFilesLocating {
@@ -45,27 +55,121 @@ public final class ManifestFilesLocator: ManifestFilesLocating {
         }
     }
 
-    public func locatePluginManifests(at locatingPath: AbsolutePath) -> [AbsolutePath] {
-        guard let rootPath = rootDirectoryLocator.locate(from: locatingPath) else {
-            return FileHandler.shared.glob(locatingPath, glob: "**/\(Manifest.plugin.fileName(locatingPath))")
+    public func locatePluginManifests(
+        at locatingPath: AbsolutePath,
+        excluding: [String],
+        onlyCurrentDirectory: Bool
+    ) -> [AbsolutePath] {
+        if onlyCurrentDirectory {
+            let pluginPath = locatingPath.appending(
+                component: Manifest.plugin.fileName(locatingPath)
+            )
+            guard FileHandler.shared.exists(pluginPath) else { return [] }
+            return [pluginPath]
+        } else {
+            let path = rootDirectoryLocator.locate(from: locatingPath) ?? locatingPath
+
+            let pluginsPaths = fetchTuistManifestsFilePaths(at: path)
+                .filter { $0.basename == Manifest.plugin.fileName(path) }
+                .filter { path in
+                    !excluding.contains { pattern in match(path, pattern: pattern) }
+                }
+
+            return Array(pluginsPaths)
         }
-        return FileHandler.shared.glob(rootPath, glob: "**/\(Manifest.plugin.fileName(rootPath))")
     }
 
-    public func locateProjectManifests(at locatingPath: AbsolutePath) -> [(Manifest, AbsolutePath)] {
-        guard let rootPath = rootDirectoryLocator.locate(from: locatingPath) else {
-            let projectsPaths = FileHandler.shared.glob(locatingPath, glob: "**/\(Manifest.project.fileName(locatingPath))")
-                .map { (Manifest.project, $0) }
-            let workspacesPaths = FileHandler.shared.glob(locatingPath, glob: "**/\(Manifest.workspace.fileName(locatingPath))")
-                .map { (Manifest.workspace, $0) }
-            return projectsPaths + workspacesPaths
-        }
+    private func match(_ path: AbsolutePath, pattern: String) -> Bool {
+        return fnmatch(pattern, path.pathString, 0) != FNM_NOMATCH
+    }
 
-        let projectsPaths = FileHandler.shared.glob(rootPath, glob: "**/\(Manifest.project.fileName(rootPath))")
-            .map { (Manifest.project, $0) }
-        let workspacesPaths = FileHandler.shared.glob(rootPath, glob: "**/\(Manifest.workspace.fileName(rootPath))")
-            .map { (Manifest.workspace, $0) }
-        return projectsPaths + workspacesPaths
+    var cacheTuistManifestsFilePaths = [AbsolutePath: Set<AbsolutePath>]()
+
+    private func fetchTuistManifestsFilePaths(at path: AbsolutePath) -> Set<AbsolutePath> {
+        if let cachedTuistManifestsFilePaths = cacheTuistManifestsFilePaths[path] {
+            return cachedTuistManifestsFilePaths
+        }
+        let fileNamesCandidates: Set<String> = [
+            Manifest.project.fileName(path),
+            Manifest.workspace.fileName(path),
+            Manifest.plugin.fileName(path),
+        ]
+        let tuistManifestsFilePaths = FileHandler.shared.glob(path, glob: "**/*.swift")
+            .filter { fileNamesCandidates.contains($0.basename) }
+            .filter { hasValidManifestContent($0) }
+        let cachedTuistManifestsFilePaths = Set(tuistManifestsFilePaths)
+        cacheTuistManifestsFilePaths[path] = cachedTuistManifestsFilePaths
+        return cachedTuistManifestsFilePaths
+    }
+
+    private func hasValidManifestContent(_ path: AbsolutePath) -> Bool {
+        guard let content = try? FileHandler.shared.readTextFile(path) else { return false }
+
+        let tuistManifestSignature = "import ProjectDescription"
+        return content.contains(tuistManifestSignature) || content.isEmpty
+    }
+
+    /// Project manifest returned by `locateProjectManifests`
+    public struct ProjectManifest: Equatable {
+        public let manifest: Manifest
+        public let path: AbsolutePath
+
+        public init(
+            manifest: Manifest,
+            path: AbsolutePath
+        ) {
+            self.manifest = manifest
+            self.path = path
+        }
+    }
+
+    public func locateProjectManifests(
+        at locatingPath: AbsolutePath,
+        excluding: [String],
+        onlyCurrentDirectory: Bool
+    ) -> [ProjectManifest] {
+        if onlyCurrentDirectory {
+            return [
+                ProjectManifest(
+                    manifest: Manifest.project,
+                    path: locatingPath.appending(
+                        component: Manifest.project.fileName(locatingPath)
+                    )
+                ),
+                ProjectManifest(
+                    manifest: Manifest.workspace,
+                    path: locatingPath.appending(
+                        component: Manifest.workspace.fileName(locatingPath)
+                    )
+                ),
+            ]
+            .filter { FileHandler.shared.exists($0.path) }
+        } else {
+            let path = rootDirectoryLocator.locate(from: locatingPath) ?? locatingPath
+
+            let manifestsFilePaths = fetchTuistManifestsFilePaths(at: path)
+                .filter { path in
+                    !excluding.contains { pattern in match(path, pattern: pattern) }
+                }
+            let projectsPaths = manifestsFilePaths
+                .filter { $0.basename == Manifest.project.fileName(path) }
+                .map {
+                    ProjectManifest(
+                        manifest: Manifest.project,
+                        path: $0
+                    )
+                }
+            let workspacesPaths = manifestsFilePaths
+                .filter { $0.basename == Manifest.workspace.fileName(path) }
+                .map {
+                    ProjectManifest(
+                        manifest: Manifest.workspace,
+                        path: $0
+                    )
+                }
+
+            return (projectsPaths + workspacesPaths)
+        }
     }
 
     public func locateConfig(at locatingPath: AbsolutePath) -> AbsolutePath? {
@@ -75,11 +179,6 @@ public final class ManifestFilesLocator: ManifestFilesLocating {
 
     public func locateDependencies(at locatingPath: AbsolutePath) -> AbsolutePath? {
         let subPath = RelativePath("\(Constants.tuistDirectoryName)/\(Manifest.dependencies.fileName(locatingPath))")
-        return traverseAndLocate(at: locatingPath, appending: subPath)
-    }
-
-    public func locateSetup(at locatingPath: AbsolutePath) -> AbsolutePath? {
-        let subPath = RelativePath(Manifest.setup.fileName(locatingPath))
         return traverseAndLocate(at: locatingPath, appending: subPath)
     }
 

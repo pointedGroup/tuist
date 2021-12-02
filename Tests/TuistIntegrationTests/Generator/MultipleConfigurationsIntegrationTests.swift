@@ -20,10 +20,6 @@ final class MultipleConfigurationsIntegrationTests: TuistUnitTestCase {
         }
     }
 
-    override func tearDown() {
-        super.tearDown()
-    }
-
     func testGenerateThrowsLintingErrorWhenConfigurationsAreEmpty() throws {
         // Given
         let projectSettings = Settings(configurations: [:])
@@ -311,17 +307,14 @@ final class MultipleConfigurationsIntegrationTests: TuistUnitTestCase {
     // MARK: - Helpers
 
     private func generateWorkspace(projectSettings: Settings, targetSettings: Settings?) throws {
-        let temporaryPath = try self.temporaryPath()
-
-        let modelLoader = try createModelLoader(projectSettings: projectSettings, targetSettings: targetSettings)
+        let models = try createModels(projectSettings: projectSettings, targetSettings: targetSettings)
         let subject = DescriptorGenerator()
         let writer = XcodeProjWriter()
         let linter = GraphLinter()
-        let graphLoader = GraphLoader(modelLoader: modelLoader)
+        let graphLoader = GraphLoader()
 
-        let graph = try graphLoader.loadWorkspace(path: temporaryPath)
-        let valueGraph = ValueGraph(graph: graph)
-        let graphTraverser = ValueGraphTraverser(graph: valueGraph)
+        let graph = try graphLoader.loadWorkspace(workspace: models.workspace, projects: models.projects)
+        let graphTraverser = GraphTraverser(graph: graph)
         try linter.lint(graphTraverser: graphTraverser).printAndThrowIfNeeded()
         let descriptor = try subject.generateWorkspace(graphTraverser: graphTraverser)
         try writer.write(workspace: descriptor)
@@ -340,21 +333,21 @@ final class MultipleConfigurationsIntegrationTests: TuistUnitTestCase {
         return absolutePath
     }
 
-    private func createModelLoader(projectSettings: Settings, targetSettings: Settings?) throws -> GeneratorModelLoading {
+    private func createModels(projectSettings: Settings, targetSettings: Settings?) throws -> WorkspaceWithProjects {
         let temporaryPath = try self.temporaryPath()
-        let modelLoader = MockGeneratorModelLoader(basePath: temporaryPath)
         let appTarget = try createAppTarget(settings: targetSettings)
-        let project = createProject(path: try pathTo("App"), settings: projectSettings, targets: [appTarget], schemes: [])
+        let project = createProject(
+            path: try pathTo("App"),
+            settings: projectSettings,
+            targets: [appTarget],
+            schemes: []
+        )
         let workspace = try createWorkspace(path: temporaryPath, projects: ["App"])
-
-        modelLoader.mockProject("App") { _ in project }
-        modelLoader.mockWorkspace { _ in workspace }
-
-        return modelLoader
+        return WorkspaceWithProjects(workspace: workspace, projects: [project])
     }
 
     private func createConfig() -> Config {
-        Config(compatibleXcodeVersions: .all, cloud: nil, cache: .default, plugins: [], generationOptions: [], path: nil)
+        Config(compatibleXcodeVersions: .all, cloud: nil, cache: .default, swiftVersion: nil, plugins: [], generationOptions: [], path: nil)
     }
 
     private func createWorkspace(path: AbsolutePath, projects: [String]) throws -> Workspace {
@@ -374,13 +367,16 @@ final class MultipleConfigurationsIntegrationTests: TuistUnitTestCase {
             name: "App",
             organizationName: nil,
             developmentRegion: nil,
+            options: [],
             settings: settings,
             filesGroup: .group(name: "Project"),
             targets: targets,
             packages: packages,
             schemes: schemes,
             ideTemplateMacros: nil,
-            additionalFiles: []
+            additionalFiles: [],
+            resourceSynthesizers: [],
+            lastUpgradeCheck: nil
         )
     }
 

@@ -4,6 +4,7 @@ import TuistCore
 import TuistSupport
 import XCTest
 @testable import TuistGraph
+@testable import TuistGraphTesting
 @testable import TuistSupportTesting
 
 final class TargetErrorTests: TuistUnitTestCase {
@@ -20,8 +21,19 @@ final class TargetErrorTests: TuistUnitTestCase {
 }
 
 final class TargetTests: TuistUnitTestCase {
+    func test_codable() {
+        // Given
+        let subject = Target.test(name: "Test", product: .staticLibrary)
+
+        // Then
+        XCTAssertCodable(subject)
+    }
+
     func test_validSourceExtensions() {
-        XCTAssertEqual(Target.validSourceExtensions, ["m", "swift", "mm", "cpp", "c", "d", "s", "intentdefinition", "xcmappingmodel", "metal", "mlmodel"])
+        XCTAssertEqual(
+            Target.validSourceExtensions,
+            ["m", "swift", "mm", "cpp", "cc", "c", "d", "s", "intentdefinition", "xcmappingmodel", "metal", "mlmodel"]
+        )
     }
 
     func test_productName_when_staticLibrary() {
@@ -254,5 +266,27 @@ final class TargetTests: TuistUnitTestCase {
             "resources/e.ttf",
             "resources/f.otf",
         ])
+    }
+
+    func test_targetDependencyBuildFilesPlatformFilter_when_iOS_targets_mac() {
+        // Given
+        let target = Target.test(deploymentTarget: .iOS("14.0", [.mac]))
+
+        // When
+        let got = target.targetDependencyBuildFilesPlatformFilter
+
+        // Then
+        XCTAssertEqual(got, .catalyst)
+    }
+
+    func test_targetDependencyBuildFilesPlatformFilter_when_iOS_and_doesnt_target_mac() {
+        // Given
+        let target = Target.test(deploymentTarget: .iOS("14.0", [.iphone]))
+
+        // When
+        let got = target.targetDependencyBuildFilesPlatformFilter
+
+        // Then
+        XCTAssertEqual(got, .ios)
     }
 }

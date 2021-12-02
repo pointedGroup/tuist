@@ -12,8 +12,8 @@ final class GitHandlerTests: TuistUnitTestCase {
     }
 
     override func tearDown() {
-        super.tearDown()
         subject = nil
+        super.tearDown()
     }
 
     func test_cloneInto() throws {
@@ -60,7 +60,7 @@ final class GitHandlerTests: TuistUnitTestCase {
         let expectedCommand = [
             "git",
             "--git-dir",
-            path.appending(.init(".git")).pathString,
+            path.appending(component: ".git").pathString,
             "--work-tree",
             path.pathString,
             "checkout",
@@ -73,7 +73,7 @@ final class GitHandlerTests: TuistUnitTestCase {
         XCTAssertTrue(system.called(
             "git",
             "--git-dir",
-            path.appending(.init(".git")).pathString,
+            path.appending(component: ".git").pathString,
             "--work-tree",
             path.pathString,
             "checkout",

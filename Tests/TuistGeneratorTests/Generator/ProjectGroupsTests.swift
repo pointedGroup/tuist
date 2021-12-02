@@ -28,6 +28,7 @@ final class ProjectGroupsTests: XCTestCase {
             name: "Project",
             organizationName: nil,
             developmentRegion: nil,
+            options: [],
             settings: .default,
             filesGroup: .group(name: "Project"),
             targets: [
@@ -37,18 +38,19 @@ final class ProjectGroupsTests: XCTestCase {
             packages: [],
             schemes: [],
             ideTemplateMacros: nil,
-            additionalFiles: []
+            additionalFiles: [],
+            resourceSynthesizers: [],
+            lastUpgradeCheck: nil
         )
         pbxproj = PBXProj()
     }
 
     override func tearDown() {
-        super.tearDown()
-
         pbxproj = nil
         project = nil
         sourceRootPath = nil
         subject = nil
+        super.tearDown()
     }
 
     func test_generate() {
@@ -168,5 +170,40 @@ final class ProjectGroupsTests: XCTestCase {
 
     func test_projectGroupsError_type() {
         XCTAssertEqual(ProjectGroupsError.missingGroup("abc").type, .bug)
+    }
+
+    func test_generate_with_text_settings() {
+        // Given
+        let textSettings = TextSettings.test()
+        let project = Project.test(options: [.textSettings(textSettings)])
+
+        // When
+        let main = ProjectGroups.generate(
+            project: project,
+            pbxproj: pbxproj
+        ).sortedMain
+
+        // Then
+        XCTAssertEqual(main.usesTabs, textSettings.usesTabs)
+        XCTAssertEqual(main.indentWidth, textSettings.indentWidth)
+        XCTAssertEqual(main.tabWidth, textSettings.tabWidth)
+        XCTAssertEqual(main.wrapsLines, textSettings.wrapsLines)
+    }
+
+    func test_generate_without_text_settings() {
+        // Given
+        let project = Project.test(options: [])
+
+        // When
+        let main = ProjectGroups.generate(
+            project: project,
+            pbxproj: pbxproj
+        ).sortedMain
+
+        // Then
+        XCTAssertNil(main.usesTabs)
+        XCTAssertNil(main.indentWidth)
+        XCTAssertNil(main.tabWidth)
+        XCTAssertNil(main.wrapsLines)
     }
 }

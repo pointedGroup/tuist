@@ -27,72 +27,88 @@ enum TestServiceError: FatalError {
     // Error type
     var type: ErrorType {
         switch self {
-        case .schemeNotFound:
-            return .abort
-        case .schemeWithoutTestableTargets:
+        case .schemeNotFound, .schemeWithoutTestableTargets:
             return .abort
         }
     }
 }
 
 final class TestService {
-    private let testServiceGeneratorFactory: TestServiceGeneratorFactorying
+    private let generatorFactory: GeneratorFactorying
     private let xcodebuildController: XcodeBuildControlling
     private let buildGraphInspector: BuildGraphInspecting
     private let simulatorController: SimulatorControlling
+    private let contentHasher: ContentHashing
 
-    private let temporaryDirectory: TemporaryDirectory
     private let testsCacheTemporaryDirectory: TemporaryDirectory
+    private let cacheDirectoryProviderFactory: CacheDirectoriesProviderFactoring
 
     convenience init() throws {
-        let temporaryDirectory = try TemporaryDirectory(removeTreeOnDeinit: true)
         let testsCacheTemporaryDirectory = try TemporaryDirectory(removeTreeOnDeinit: true)
         self.init(
-            temporaryDirectory: temporaryDirectory,
             testsCacheTemporaryDirectory: testsCacheTemporaryDirectory,
-            testServiceGeneratorFactory: TestServiceGeneratorFactory()
+            generatorFactory: GeneratorFactory()
         )
     }
 
     init(
-        temporaryDirectory: TemporaryDirectory,
         testsCacheTemporaryDirectory: TemporaryDirectory,
-        testServiceGeneratorFactory: TestServiceGeneratorFactorying,
+        generatorFactory: GeneratorFactorying,
         xcodebuildController: XcodeBuildControlling = XcodeBuildController(),
         buildGraphInspector: BuildGraphInspecting = BuildGraphInspector(),
-        simulatorController: SimulatorControlling = SimulatorController()
+        simulatorController: SimulatorControlling = SimulatorController(),
+        contentHasher: ContentHashing = ContentHasher(),
+        cacheDirectoryProviderFactory: CacheDirectoriesProviderFactoring = CacheDirectoriesProviderFactory()
     ) {
-        self.temporaryDirectory = temporaryDirectory
         self.testsCacheTemporaryDirectory = testsCacheTemporaryDirectory
-        self.testServiceGeneratorFactory = testServiceGeneratorFactory
+        self.generatorFactory = generatorFactory
         self.xcodebuildController = xcodebuildController
         self.buildGraphInspector = buildGraphInspector
         self.simulatorController = simulatorController
+        self.contentHasher = contentHasher
+        self.cacheDirectoryProviderFactory = cacheDirectoryProviderFactory
     }
 
+    // swiftlint:disable:next function_body_length
     func run(
         schemeName: String?,
         clean: Bool,
         configuration: String?,
         path: AbsolutePath,
         deviceName: String?,
-        osVersion: String?
+        osVersion: String?,
+        skipUITests: Bool,
+        resultBundlePath: AbsolutePath?
     ) throws {
-        let generator = testServiceGeneratorFactory.generator(
-            automationPath: Environment.shared.automationPath ?? temporaryDirectory.path,
-            testsCacheDirectory: testsCacheTemporaryDirectory.path
+        // Load config
+        let manifestLoaderFactory = ManifestLoaderFactory()
+        let manifestLoader = manifestLoaderFactory.createManifestLoader()
+        let configLoader = ConfigLoader(manifestLoader: manifestLoader)
+        let config = try configLoader.loadConfig(path: path)
+        let cacheDirectoriesProvider = try cacheDirectoryProviderFactory.cacheDirectories(config: config)
+
+        let projectDirectory = cacheDirectoriesProvider.cacheDirectory(for: .generatedAutomationProjects)
+            .appending(component: "\(try contentHasher.hash(path.pathString))")
+        if !FileHandler.shared.exists(projectDirectory) {
+            try FileHandler.shared.createFolder(projectDirectory)
+        }
+
+        let generator = generatorFactory.test(
+            config: config,
+            automationPath: Environment.shared.automationPath ?? projectDirectory,
+            testsCacheDirectory: testsCacheTemporaryDirectory.path,
+            skipUITests: skipUITests
         )
         logger.notice("Generating project for testing", metadata: .section)
-        let graph = ValueGraph(
-            graph: try generator.generateWithGraph(
-                path: path,
-                projectOnly: false
-            ).1
-        )
-        let graphTraverser = ValueGraphTraverser(graph: graph)
+        let graph = try generator.generateWithGraph(
+            path: path,
+            projectOnly: false
+        ).1
+        let graphTraverser = GraphTraverser(graph: graph)
         let version = osVersion?.version()
 
-        let testableSchemes = buildGraphInspector.testableSchemes(graphTraverser: graphTraverser) + buildGraphInspector.projectSchemes(graphTraverser: graphTraverser)
+        let testableSchemes = buildGraphInspector.testableSchemes(graphTraverser: graphTraverser) +
+            buildGraphInspector.projectSchemes(graphTraverser: graphTraverser)
         logger.log(
             level: .debug,
             "Found the following testable schemes: \(Set(testableSchemes.map(\.name)).joined(separator: ", "))"
@@ -122,7 +138,8 @@ final class TestService {
                     clean: clean,
                     configuration: configuration,
                     version: version,
-                    deviceName: deviceName
+                    deviceName: deviceName,
+                    resultBundlePath: resultBundlePath
                 )
             }
         } else {
@@ -143,21 +160,22 @@ final class TestService {
                     clean: clean,
                     configuration: configuration,
                     version: version,
-                    deviceName: deviceName
+                    deviceName: deviceName,
+                    resultBundlePath: resultBundlePath
                 )
             }
 
             if !FileHandler.shared.exists(
-                Environment.shared.testsCacheDirectory
+                cacheDirectoriesProvider.cacheDirectory(for: .tests)
             ) {
-                try FileHandler.shared.createFolder(Environment.shared.testsCacheDirectory)
+                try FileHandler.shared.createFolder(cacheDirectoriesProvider.cacheDirectory(for: .tests))
             }
 
-            // Saving hashes to `testsCacheTemporaryDirectory` after all the tests have run successfully
+            // Saving hashes from `testsCacheTemporaryDirectory` to `testsCacheDirectory` after all the tests have run successfully
             try FileHandler.shared
                 .contentsOfDirectory(testsCacheTemporaryDirectory.path)
                 .forEach { hashPath in
-                    let destination = Environment.shared.testsCacheDirectory.appending(component: hashPath.basename)
+                    let destination = cacheDirectoriesProvider.cacheDirectory(for: .tests).appending(component: hashPath.basename)
                     guard !FileHandler.shared.exists(destination) else { return }
                     try FileHandler.shared.move(
                         from: hashPath,
@@ -177,7 +195,8 @@ final class TestService {
         clean: Bool,
         configuration: String?,
         version: Version?,
-        deviceName: String?
+        deviceName: String?,
+        resultBundlePath: AbsolutePath?
     ) throws {
         logger.log(level: .notice, "Testing scheme \(scheme.name)", metadata: .section)
         guard let buildableTarget = buildGraphInspector.testableTarget(scheme: scheme, graphTraverser: graphTraverser) else {
@@ -198,6 +217,7 @@ final class TestService {
             clean: clean,
             destination: destination,
             derivedDataPath: nil,
+            resultBundlePath: resultBundlePath,
             arguments: buildGraphInspector.buildArguments(
                 project: buildableTarget.project,
                 target: buildableTarget.target,

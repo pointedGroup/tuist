@@ -4,25 +4,25 @@ import TuistSupport
 
 enum BinaryLocatorError: FatalError, Equatable {
     case swiftLintNotFound
-    case swiftDocNotFound
     case xcbeautifyNotFound
+    case cocoapodsInteractorNotFound
 
     var description: String {
         switch self {
         case .swiftLintNotFound:
             return "Couldn't find the swift-lint binary."
-        case .swiftDocNotFound:
-            return "Couldn't find the swift-doc binary."
         case .xcbeautifyNotFound:
             return "Couldn't find the xcbeautify binary."
+        case .cocoapodsInteractorNotFound:
+            return "Couldn't find the cocoapods-interactor executable."
         }
     }
 
     var type: ErrorType {
         switch self {
         case .swiftLintNotFound,
-             .swiftDocNotFound,
-             .xcbeautifyNotFound:
+             .xcbeautifyNotFound,
+             .cocoapodsInteractorNotFound:
             return .bug
         }
     }
@@ -33,11 +33,11 @@ public protocol BinaryLocating {
     /// Returns the path to the swift-lint binary.
     func swiftLintPath() throws -> AbsolutePath
 
-    /// Returns the path to the swift-doc binary.
-    func swiftDocPath() throws -> AbsolutePath
-
     /// Returns the path to the xcbeautify binary.
     func xcbeautifyPath() throws -> AbsolutePath
+
+    /// Returns the path to the cocoapods-interactor executable
+    func cocoapodsInteractorPath() throws -> AbsolutePath
 }
 
 public final class BinaryLocator: BinaryLocating {
@@ -51,7 +51,7 @@ public final class BinaryLocator: BinaryLocating {
                 .removingLastComponent()
                 .removingLastComponent()
                 .removingLastComponent()
-                .appending(RelativePath("vendor"))
+                .appending(RelativePath("projects/tuist/vendor"))
         #else
             let bundlePath = AbsolutePath(Bundle(for: BinaryLocator.self).bundleURL.path)
         #endif
@@ -62,9 +62,27 @@ public final class BinaryLocator: BinaryLocating {
         ]
     }
 
+    public func cocoapodsInteractorPath() throws -> AbsolutePath {
+        #if DEBUG
+            // Used only for debug purposes
+            let path = AbsolutePath(#file.replacingOccurrences(of: "file://", with: ""))
+                .removingLastComponent()
+                .removingLastComponent()
+                .removingLastComponent()
+                .removingLastComponent()
+                .appending(RelativePath("projects/cocoapods-interactor/bin/cocoapods-interactor"))
+        #else
+            let path = AbsolutePath(Bundle(for: BinaryLocator.self).bundleURL.path).appending(RelativePath("cocoapods-interactor/bin/cocoapods-interactor"))
+        #endif
+        guard FileHandler.shared.exists(path) else {
+            throw BinaryLocatorError.cocoapodsInteractorNotFound
+        }
+        return path
+    }
+
     public func swiftLintPath() throws -> AbsolutePath {
         let candidates = try binariesPaths().map { path in
-            path.appending(component: Constants.Vendor.swiftLint)
+            path.appending(components: Constants.Vendor.swiftLint, Constants.Vendor.swiftLint)
         }
 
         guard let existingPath = candidates.first(where: FileHandler.shared.exists) else {
@@ -73,20 +91,9 @@ public final class BinaryLocator: BinaryLocating {
         return existingPath
     }
 
-    public func swiftDocPath() throws -> AbsolutePath {
-        let candidates = try binariesPaths().map { path in
-            path.appending(component: Constants.Vendor.swiftDoc)
-        }
-
-        guard let existingPath = candidates.first(where: FileHandler.shared.exists) else {
-            throw BinaryLocatorError.swiftDocNotFound
-        }
-        return existingPath
-    }
-
     public func xcbeautifyPath() throws -> AbsolutePath {
         let candidates = try binariesPaths().map { path in
-            path.appending(component: Constants.Vendor.xcbeautify)
+            path.appending(components: Constants.Vendor.xcbeautify, Constants.Vendor.xcbeautify)
         }
 
         guard let existingPath = candidates.first(where: FileHandler.shared.exists) else {
